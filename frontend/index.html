@@ -226,6 +226,21 @@
   .qcard.flag { border: 2px solid var(--warn); background: #fff; }
   .qcard .qn { width: 46px; font-weight: 700; }
   .qcard .why { font-size: 12px; color: var(--ink); font-weight: 700; width: 82px; }
+  /* 검수 화면: 선지마다 채움 막대(위) + 번호 버튼(아래)을 한 열로 묶어서 막대와 버튼이 세로로 맞게 함 */
+  .chs { display: flex; gap: 6px; align-items: flex-end; flex: 1 1 100%; }
+  .chcol { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  /* 결과 화면 학생별 상세의 선지별 채움 막대 */
+  .fills { display: flex; gap: 6px; }
+  .fill { width: 34px; text-align: center; font-size: 11px; color: var(--muted); }
+  .fill .bar { height: 30px; background: var(--gray-soft); border-radius: 4px; position: relative; overflow: hidden; margin-bottom: 2px; }
+  .fill .bar > i { position: absolute; left: 0; right: 0; bottom: 0; background: #6b7487; }
+  .fill .bar > i.hi { background: var(--ink); }
+  /* 결과 화면 학생별 상세: 선지 번호 표시 (검은 원 = 학생이 고른 선지, 초록 테두리 = 정답) */
+  .fill .cn { width: 18px; height: 18px; line-height: 18px; margin: 3px auto 0; border-radius: 50%; font-size: 11px; font-weight: 700; color: var(--muted); }
+  .fill.picked .cn { background: var(--ink); color: #fff; }
+  .fill.key .cn { box-shadow: 0 0 0 2px var(--ok); }
+  .qcard .ansbox { margin-left: auto; text-align: right; font-size: 13px; line-height: 1.5; min-width: 120px; }
+  .qcard.res-wrong { border-color: var(--bad); background: #fff; }
   .sid { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .sid input { width: 160px; font-size: 16px; font-weight: 700; letter-spacing: .08em; }
   .photo { width: 100%; border: 1px solid var(--line); border-radius: 8px; }
@@ -251,6 +266,8 @@
   .login input[type=text], .login input[type=password] { width: 100%; padding: 12px 14px; font-size: 15px; }
   .login .opts { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); margin: -6px 0 18px; }
   .login .opts a { color: var(--muted); cursor: pointer; text-decoration: none; }
+  .login .opts .optlinks { display: flex; gap: 12px; }
+  .login .note a { color: var(--accent); cursor: pointer; }
   .login .opts label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
   .login .note { text-align: center; color: var(--muted); font-size: 13px; margin-top: 22px; }
   input[type=password] { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; font-family: inherit; background: #fff; width: 100%; }
@@ -1312,6 +1329,9 @@ async function pageReview() {
 
     function drawQ() {
       const qs = showAll ? read.mcq : flagged;
+      // 채움 막대를 진하게 칠하는 기준: 판독에 쓴 마킹 기준 (잉크 농도 방식이면 solid_min, 이전 방식이면 marked_min)
+      const rcfg = read.read_config || {};
+      const hiMin = (rcfg.method === "darkness" ? rcfg.solid_min : rcfg.marked_min) ?? 0.6;
       $("qlist").innerHTML = qs.map(m => {
         const a = cur[m.q] || [];
         const key = keyAns && keyAns[m.q];
@@ -1319,10 +1339,12 @@ async function pageReview() {
         return `<div class="qcard ${m.needs_review && !lock ? "flag" : ""}" data-q="${m.q}" ${lock ? `style="background:var(--soft)" title="내가 맡은 문항이 아닙니다"` : ""}>
           <span class="qn">${m.q}번${sectionOf(m.q) ? `<div class="small">${esc(sectionOf(m.q))}</div>` : ""}</span>
           ${m.needs_review ? `<span class="why">${READ_WHY[m.status] || "확인 필요"}</span>` : ""}
-          <div class="bubbles" style="margin-left:auto">${Array.from({ length: C }, (_, i) =>
-            `<button type="button" class="bub ${a.includes(i + 1) ? "on" : ""}" data-q="${m.q}" data-c="${i + 1}" ${lock ? "disabled" : ""}>${i + 1}</button>`).join("")}
-            <button type="button" class="btn nores ${decided.has(m.q) && !a.length ? "on" : ""}" data-q="${m.q}" style="padding:6px 10px" ${lock ? "disabled" : ""}>무응답</button></div>
-          ${key ? `<span class="small muted" style="width:62px;text-align:right">정답 ${key.join(",")}</span>` : ""}
+          ${key ? `<span class="small muted" style="margin-left:auto;text-align:right">정답 ${key.join(",")}</span>` : ""}
+          <div class="chs">${Array.from({ length: C }, (_, i) => { const f = (m.fill || [])[i] ?? 0;   /* 선지마다 채움 막대(위)와 번호 버튼(아래)을 한 열로 묶어 세로로 맞춤 */
+            return `<div class="chcol">
+              <div class="fill"><div class="bar"><i class="${f >= hiMin ? "hi" : ""}" style="height:${Math.round(f * 100)}%"></i></div>${Math.round(f * 100)}%</div>
+              <button type="button" class="bub ${a.includes(i + 1) ? "on" : ""}" data-q="${m.q}" data-c="${i + 1}" ${lock ? "disabled" : ""}>${i + 1}</button></div>`; }).join("")}
+            <div class="chcol"><button type="button" class="btn nores ${decided.has(m.q) && !a.length ? "on" : ""}" data-q="${m.q}" style="padding:6px 10px" ${lock ? "disabled" : ""}>무응답</button></div></div>
         </div>`;
       }).join("") || `<div class="empty small">확인할 문항이 없습니다</div>`;
     }
@@ -1459,7 +1481,7 @@ async function pageResults() {
     <div class="card">
       <h2>학생별 점수</h2>
       <div class="tablewrap"><table class="t">
-        <thead><tr><th>학번</th><th>사진 파일</th><th>상태</th>${secHead}${essayHead}<th class="num">총점</th><th class="num">맞음</th><th class="num">틀림</th><th class="num">무응답</th><th class="num">복수 표시</th></tr></thead>
+        <thead><tr><th>학번</th><th>사진 파일</th><th>상태</th>${secHead}${essayHead}<th class="num">총점</th><th class="num">맞음</th><th class="num">틀림</th><th class="num">무응답</th><th class="num">복수 표시</th><th></th></tr></thead>
         <tbody>${sorted.map(r => `<tr>
           <td class="mono">${esc(r.student_id || "-")}</td>
           <td class="small">${esc(r.source)}</td>
@@ -1468,14 +1490,56 @@ async function pageResults() {
           <td class="num"><b>${r.status === "확정" ? fmtNum(r.score) : r.status === "검수 대기" ? `${fmtNum(r.confirmed_score)}~${fmtNum(r.max_possible)}` : "-"}</b>${r.total_points != null ? `<span class="muted"> / ${fmtNum(r.total_points)}</span>` : ""}</td>
           <td class="num">${r.counts?.correct ?? "-"}</td><td class="num">${r.counts?.wrong ?? "-"}</td>
           <td class="num">${r.counts?.blank ?? "-"}</td><td class="num">${r.counts?.multi ?? "-"}</td>
+          <td style="text-align:right">${r.status === "재촬영 필요" ? "" : `<button type="button" class="btn" data-detail="${sorted.indexOf(r)}" style="padding:4px 12px">상세</button>`}</td>
         </tr>`).join("")}</tbody></table></div>
     </div>
+    <div id="studentDetail"></div>
     <div class="card">
       <h2>문항별 정답률</h2>
       <div class="rates">${rates.map(x => `<div class="rate"><b>${x.q}번</b>
         <div class="track"><div class="${x.rate != null && x.rate < 0.4 ? "low" : ""}" style="width:${x.rate == null ? 0 : Math.round(x.rate * 100)}%"></div></div>
         <span class="num" style="text-align:right">${x.rate == null ? "-" : Math.round(x.rate * 100) + "%"}</span></div>`).join("")}</div>
     </div>`;
+
+  // ---- 학생별 상세: 학생 한 명의 문항별 답·정오·선지별 채움 비율 (검수 화면과 같은 막대 모양) ----
+  const RES = { correct: ["정답", "ok"], wrong: ["오답", "bad"], multi: ["복수 표시", "warn"], blank: ["무응답", "gray"], pending: ["검수 대기", "warn"] };
+  const ansTxt = (a) => a == null ? "판정 보류" : a.length ? a.join(", ") : "무응답";
+  let detailSel = null, detailFilter = "all";          // 지금 열린 학생(sorted 의 위치), 보기 필터: all / bad(맞은 문항 숨김)
+  function drawDetail() {
+    const box = $("studentDetail");
+    if (detailSel == null) { box.innerHTML = ""; return; }
+    const r = sorted[detailSel];
+    const its = (r.items || []).filter(it => detailFilter === "all" || it.result !== "correct");
+    const cnt = r.counts || {};
+    box.innerHTML = `<div class="card">
+      <div class="row" style="margin-bottom:6px">
+        <h2 style="margin:0">${esc(r.student_id || r.student_id_raw || "학번 미확인")} <span class="muted small" style="font-weight:400">${esc(r.source)}</span></h2>
+        ${statusPill(r)}
+        <b>${r.status === "확정" ? fmtNum(r.score) : `${fmtNum(r.confirmed_score)}~${fmtNum(r.max_possible)}`}</b><span class="muted"> / ${fmtNum(r.total_points)}</span>
+        <button type="button" class="btn" id="detailClose" style="margin-left:auto;padding:4px 12px">닫기</button>
+      </div>
+      <p class="desc">정답 ${cnt.correct ?? 0} · 오답 ${cnt.wrong ?? 0} · 무응답 ${cnt.blank ?? 0} · 복수 표시 ${cnt.multi ?? 0} · 검수 대기 ${cnt.pending ?? 0}</p>
+      <label class="small" style="display:inline-flex;gap:6px;align-items:center;margin-bottom:10px"><input type="checkbox" id="detailWrongOnly" ${detailFilter === "bad" ? "checked" : ""}> 맞은 문항 숨기기</label>
+      ${its.length ? its.map(it => {
+        const [label, cls] = RES[it.result] || [it.result, "gray"];
+        const a = it.answer || [], key = it.key || [];
+        return `<div class="qcard ${it.result === "pending" ? "flag" : ""} ${it.result === "wrong" ? "res-wrong" : ""}">
+          <span class="qn">${it.q}번</span>
+          <span class="pill ${cls}">${label}</span>
+          <div class="fills">${(it.fill || []).map((f, i) => `<div class="fill ${a.includes(i + 1) ? "picked" : ""} ${key.includes(i + 1) ? "key" : ""}">
+            <div class="bar"><i class="${a.includes(i + 1) ? "hi" : ""}" style="height:${Math.round(f * 100)}%"></i></div>${Math.round(f * 100)}%<div class="cn">${i + 1}</div></div>`).join("")}</div>
+          <div class="ansbox">학생 답 <b>${esc(ansTxt(it.answer))}</b>${it.source === "review" ? ` <span class="pill gray" style="padding:0 7px;font-size:11px">검수 수정</span>` : ""}<br>
+            정답 <b>${esc(key.join(", "))}</b> · <span class="muted">${fmtNum(it.earned)}/${fmtNum(it.points)}점</span></div>
+        </div>`;
+      }).join("") : ""}
+    </div>`;
+    $("detailClose").onclick = () => { detailSel = null; drawDetail(); };
+    $("detailWrongOnly").onchange = (ev) => { detailFilter = ev.target.checked ? "bad" : "all"; drawDetail(); };
+  }
+  $("view").querySelectorAll("[data-detail]").forEach(b => b.onclick = () => {
+    detailSel = Number(b.dataset.detail); drawDetail();
+    $("studentDetail").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 // ---------------- 로그인 · 권한 ----------------
@@ -1492,31 +1556,38 @@ const isAdmin = () => app.user && app.user.role === "admin";
 const canCreate = () => app.user && app.user.role === "user";   // 사용자는 누구나 시험을 만들 수 있음 (만들면 그 시험의 시험 관리자)
 
 // 로그인 화면 그리기. 계정이 하나도 없으면 '첫 관리자 계정 만들기' 화면
-async function showLogin(msg = "") {
+// forceSetup: 관리자 탭의 '회원가입' 링크로 들어온 경우 — 계정이 있어도 같은 만들기 화면을 보여 주고, 제출하면 새 관리자 계정을 만듦
+// adminTab: 처음부터 '관리자' 탭을 선택해 둠 (회원가입 화면에서 돌아올 때)
+// okMsg: msg 를 오류가 아니라 안내(초록)로 보여 줌 (가입 성공 안내)
+async function showLogin(msg = "", forceSetup = false, adminTab = false, okMsg = false) {
   app.user = null; app.exam = null; app.key = null; app.sheets = null;
   const st = await api("/api/auth/status").catch(() => ({ needs_setup: false }));
   document.querySelector(".app").hidden = true;
   const box = $("login"); box.hidden = false;
-  const setup = st.needs_setup;
-  let asAdmin = false;
+  const setup = st.needs_setup || forceSetup;
+  let asAdmin = adminTab;
   box.innerHTML = `
       <form id="loginForm" novalidate>
-        ${setup ? `<h1>첫 관리자 계정 만들기</h1>`
+        ${setup ? `<h1>${forceSetup ? "관리자 회원가입" : "첫 관리자 계정 만들기"}</h1>`
         : `<h1>통합 로그인</h1>
-          <div class="seg" id="roleTab"><button type="button" aria-pressed="true">사용자</button><button type="button" aria-pressed="false">관리자</button></div>`}
+          <div class="seg" id="roleTab"><button type="button" aria-pressed="${!adminTab}">사용자</button><button type="button" aria-pressed="${adminTab}">관리자</button></div>`}
         <div class="field"><label for="lg_id">아이디</label><input type="text" id="lg_id" autocomplete="username" autocapitalize="off" placeholder="${setup ? "예) admin" : "teacher01"}"></div>
         ${setup ? `<div class="field"><label for="lg_name">이름</label><input type="text" id="lg_name" maxlength="30" placeholder="예) 김재형"></div>` : ""}
         <div class="field"><label for="lg_pw">비밀번호 ${setup ? `<span class="hint">8자 이상</span>` : ""}</label><input type="password" id="lg_pw" autocomplete="${setup ? "new-password" : "current-password"}"></div>
         ${setup ? `<div class="field"><label for="lg_pw2">비밀번호 확인</label><input type="password" id="lg_pw2" autocomplete="new-password"></div>`
-        : `<div class="opts"><label><input type="checkbox" id="lg_keep"> 로그인 상태 유지</label><a id="lg_find">비밀번호 찾기</a></div>`}
-        <div class="msg err" id="lg_err" style="${msg ? "" : "display:none"}">${esc(msg)}</div>
-        <button class="btn primary big block" type="submit">${setup ? "관리자 계정 만들고 시작하기" : "로그인"}</button>
-        ${setup ? "" : `<div class="note">계정이 없으면 관리자에게 권한을 요청하세요</div>`}
+        : `<div class="opts"><label><input type="checkbox" id="lg_keep"> 로그인 상태 유지</label>
+            <span class="optlinks"><a id="lg_signup" ${adminTab ? "" : "hidden"}>회원가입</a><a id="lg_find">비밀번호 찾기</a></span></div>`}
+        <div class="msg ${okMsg ? "ok" : "err"}" id="lg_err" style="${msg ? "" : "display:none"}">${esc(msg)}</div>
+        <button class="btn primary big block" type="submit">${setup ? (forceSetup ? "회원가입" : "관리자 계정 만들고 시작하기") : "로그인"}</button>
+        ${setup ? (forceSetup ? `<div class="note"><a id="lg_back">로그인으로 돌아가기</a></div>` : "") : `<div class="note">계정이 없으면 관리자에게 권한을 요청하세요</div>`}
       </form>`;
-  const err = (t) => { $("lg_err").style.display = ""; $("lg_err").textContent = t; };
+  const err = (t) => { $("lg_err").className = "msg err"; $("lg_err").style.display = ""; $("lg_err").textContent = t; };
+  if (forceSetup) $("lg_back").onclick = () => showLogin("", false, true);
   if (!setup) {
     const tabs = $("roleTab").children;
-    [...tabs].forEach((b, i) => b.onclick = () => { asAdmin = i === 1; tabs[0].setAttribute("aria-pressed", String(!asAdmin)); tabs[1].setAttribute("aria-pressed", String(asAdmin)); });
+    // '회원가입' 링크는 관리자 탭에서만 보임. 누르면 위의 만들기 화면으로 이동
+    [...tabs].forEach((b, i) => b.onclick = () => { asAdmin = i === 1; tabs[0].setAttribute("aria-pressed", String(!asAdmin)); tabs[1].setAttribute("aria-pressed", String(asAdmin)); $("lg_signup").hidden = !asAdmin; });
+    $("lg_signup").onclick = () => showLogin("", true);
     $("lg_find").onclick = () => err("비밀번호를 잊었으면 관리자에게 ‘비밀번호 초기화’를 요청하세요. 관리자가 임시 비밀번호를 알려 줍니다.");
   }
   $("lg_id").focus();
@@ -1527,6 +1598,10 @@ async function showLogin(msg = "") {
     try {
       if (setup) {
         if (password !== $("lg_pw2").value) return err("비밀번호 확인이 다릅니다.");
+        if (forceSetup) {                      // 관리자 회원가입: 새 관리자 계정을 바로 만듦 (자동 로그인은 안 함)
+          await api("/api/auth/admin-signup", jsonBody("POST", { username, name: $("lg_name").value.trim(), password }));
+          return showLogin(`관리자 계정(${username})이 만들어졌습니다. 로그인해 주세요.`, false, true, true);
+        }
         app.user = await api("/api/auth/setup", jsonBody("POST", { username, name: $("lg_name").value.trim(), password }));
       } else {
         app.user = await api("/api/auth/login", jsonBody("POST", { username, password, remember: $("lg_keep").checked, as_admin: asAdmin }));

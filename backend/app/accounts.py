@@ -173,6 +173,19 @@ def setup_first_admin(username: str, name: str, password: str) -> dict[str, Any]
     return _public(u)
 
 
+def signup_admin(username: str, name: str, password: str) -> dict[str, Any]:
+    """관리자 회원가입: 로그인 화면 '관리자' 탭의 '회원가입'에서 새 관리자 계정을 바로 만듦 (기존 관리자 확인 없음).
+    새 계정으로 자동 로그인하지는 않음 (만든 뒤 직접 로그인).
+
+    ※ 누구나 관리자를 만들 수 있게 되므로, 서버를 외부에 열어 두면 안 됨 (같은 PC·학교 내부망 용도)
+
+    예외:
+        AccountError: 아이디 형식 오류·중복, 비밀번호 규칙 위반
+    """
+    user, _ = create_user(username, name, "admin", password)
+    return user
+
+
 # ---------------- 로그인 ----------------
 
 def authenticate(username: str, password: str) -> dict[str, Any] | None:

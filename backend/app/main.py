@@ -815,10 +815,14 @@ def get_results(exam_id: str, user: dict = Depends(current_user)):
     sections = access.get_access(exam_id).get("sections") or []
     out = []
     for r in records:
-        r = {k: v for k, v in r.items() if k != "read"}
-        if sections and r.get("items"):
-            r["sections"] = gs.section_scores(r["items"], sections)     # 과목별 소계
-        out.append(r)
+        # 용량이 큰 "read"는 빼되, 문항별 선지 채움 비율(fill)만 items 에 옮겨 담음 → 결과 화면의 학생별 상세에서 사용
+        d = {k: v for k, v in r.items() if k != "read"}
+        mcq = {m["q"]: m for m in (r.get("read") or {}).get("mcq", [])}     # 문항 번호 → 판독 원본 한 문항
+        if "items" in d:
+            d["items"] = [{**it, "fill": (mcq.get(it["q"]) or {}).get("fill")} for it in d["items"]]
+        if sections and d.get("items"):
+            d["sections"] = gs.section_scores(d["items"], sections)         # 과목별 소계
+        out.append(d)
     return out
 
 
@@ -827,7 +831,7 @@ def get_results_xlsx(exam_id: str, user: dict = Depends(current_user)):
     """채점 결과 엑셀 내려받기 (GET /api/exams/{exam_id}/results.xlsx) — 파이프라인 P4 + P5.
 
     다시 채점(P4)한 뒤 엑셀(P5)을 시험 폴더의 results.xlsx 로 저장하고 그 파일을 보냄.
-    엑셀 시트: 학생별 점수표 / 문항별 결과 / 문항별 정답률 / 검수 대기 / 정답표.
+    엑셀 시트: 학생별 점수표 / 문항별 결과 / 학생별 상세 / 문항별 정답률 / 검수 대기 / 정답표.
 
     매개변수:
         exam_id: 시험 ID (예: "EX-20261001-8C7353")
@@ -857,6 +861,13 @@ class LoginRequest(BaseModel):
 
 class SetupRequest(BaseModel):
     """POST /api/auth/setup 요청 본문 (첫 관리자 계정)."""
+    username: str
+    name: str = ""
+    password: str
+
+
+class AdminSignupRequest(BaseModel):
+    """POST /api/auth/admin-signup 요청 본문 (관리자 회원가입)."""
     username: str
     name: str = ""
     password: str
@@ -894,6 +905,22 @@ def auth_setup(req: SetupRequest, response: Response):
     except accounts.AccountError as e:
         raise HTTPException(409 if "이미" in str(e) else 422, str(e))
     return _login_response(response, user, False)
+
+
+@app.post("/api/auth/admin-signup", status_code=201)
+def auth_admin_signup(req: AdminSignupRequest):
+    """관리자 회원가입 (POST /api/auth/admin-signup). 로그인 화면 '관리자' 탭의 '회원가입'에서 씀.
+
+    기존 관리자 확인 없이 새 관리자 계정을 바로 만듦. 새 계정으로 자동 로그인하지는 않음 → 만든 뒤 로그인 화면에서 직접 로그인.
+
+    예외:
+        HTTP 409: 이미 있는 아이디
+        HTTP 422: 아이디 형식·비밀번호 규칙 위반
+    """
+    try:
+        return accounts.signup_admin(req.username, req.name, req.password)
+    except accounts.AccountError as e:
+        raise HTTPException(409 if "이미" in str(e) else 422, str(e))
 
 
 @app.post("/api/auth/login")
