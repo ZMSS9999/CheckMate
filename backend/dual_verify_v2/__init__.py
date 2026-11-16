@@ -4,6 +4,8 @@
 [판정 방식]
   - 규칙 기반 마킹 기준(기본 60%) 이상인 칸은 규칙 기반이 마킹으로 확정, CNN은 그 미만인 칸만 판정
     (마킹 6종이면 마킹, 빈칸·수정테이프면 마킹 아님) → CNN 클래스 신뢰도가 CONFIDENCE_MIN(기본 0.9) 미만이면 검수
+  - 규칙 기반이 이미 답을 확정한 문항·학번 자리(status ok / blank / multi)에서 CNN 답이 다르면 자동 확정하지 않고 검수
+    (reason "cnn_disagree", config.DISAGREE_REVIEW 로 켜고 끔. 지운 자국을 CNN이 마킹으로 봐서 생기는 오판독을 막는 안전장치)
   - 설정값(임계값 등)은 config.py 맨 위 [설정] 부분만 고치면 됨
 
 [규칙 기반 판독(read.py)과 맞추는 부분]
@@ -27,8 +29,8 @@
         객관식  read["mcq"][i]["dual"] : compare.judge_question() 결과 (선지별 판정 출처·CNN 클래스·신뢰도·검수 사유)
                 통과 문항   : answer = 마킹된 선지들, status = ok / blank / multi, needs_review = False, reason = ""
                 검수 문항   : answer = None, status = "review", needs_review = True, reason = "cnn_low_conf" 또는
-                              "cnn_tape_no_mark" 또는 "cnn_disagree"(규칙 기반 확정 답과 CNN 답이 다름, config.DISAGREE_REVIEW)
-                              (→ score.py 가 "검수 대기"로 처리)
+                              "cnn_tape_no_mark" (→ score.py 가 "검수 대기"로 처리)
+                              또는 "cnn_disagree" (규칙 기반 확정 답과 CNN 답이 다름, config.DISAGREE_REVIEW)
                 유지된 문항 : 위 KEEP_REVIEW_REASONS 문항은 값을 안 바꾸고 dual = {"ok": False, "kept": reason}
         학번    read["student_id"]["digits"][i]["dual"] : 위와 같은 형식 (선지 번호 자리에 숫자 0~9)
                 검수가 된 자리 : value = None, status = "review" → 학번 text = None, needs_review = True
@@ -189,7 +191,7 @@ def verify_sheet(read: dict[str, Any], warped: np.ndarray, layout: dict[str, Any
         v = judge_question(g["fills"], p, marked_min, conf_min, g["nos"], tape_review, g["covs"])
         rule_ans = ref.get("answer") if g["kind"] == "mcq" else ref.get("value")
         if (config.DISAGREE_REVIEW and v["ok"] and ref.get("status") in ("ok", "blank", "multi")
-                and sorted(v["answer"]) != sorted(rule_ans or [])):   # 규칙 기반이 확정한 답과 CNN 답이 다름 → 검수
+                and sorted(v["answer"]) != sorted(rule_ans or [])):   # 규칙 기반이 확정한 답과 CNN 답이 다름 → 검수 (reason "cnn_disagree", config.DISAGREE_REVIEW 로 켜고 끔)
             v["ok"] = False
             v["reasons"].append({"type": "disagree", "rule": sorted(rule_ans or []), "cnn": sorted(v["answer"])})
         ref["dual"] = v
