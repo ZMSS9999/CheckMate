@@ -265,6 +265,8 @@
   .login input[type=text], .login input[type=password] { width: 100%; padding: 12px 14px; font-size: 15px; }
   .login .opts { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); margin: -6px 0 18px; }
   .login .opts a { color: var(--muted); cursor: pointer; text-decoration: none; }
+  .login .opts .optlinks { display: flex; gap: 12px; }
+  .login .note a { color: var(--accent); cursor: pointer; }
   .login .opts label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
   .login .note { text-align: center; color: var(--muted); font-size: 13px; margin-top: 22px; }
   input[type=password] { padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; font-family: inherit; background: #fff; width: 100%; }
@@ -1335,31 +1337,38 @@ const isAdmin = () => app.user && app.user.role === "admin";
 const canCreate = () => app.user && app.user.role === "user";   // 사용자는 누구나 시험을 만들 수 있음 (만들면 그 시험의 시험 관리자)
 
 // 로그인 화면 그리기. 계정이 하나도 없으면 '첫 관리자 계정 만들기' 화면
-async function showLogin(msg = "") {
+// forceSetup: 관리자 탭의 '회원가입' 링크로 들어온 경우 — 계정이 있어도 같은 만들기 화면을 보여 주고, 제출하면 새 관리자 계정을 만듦
+// adminTab: 처음부터 '관리자' 탭을 선택해 둠 (회원가입 화면에서 돌아올 때)
+// okMsg: msg 를 오류가 아니라 안내(초록)로 보여 줌 (가입 성공 안내)
+async function showLogin(msg = "", forceSetup = false, adminTab = false, okMsg = false) {
   app.user = null; app.exam = null; app.key = null; app.sheets = null;
   const st = await api("/api/auth/status").catch(() => ({ needs_setup: false }));
   document.querySelector(".app").hidden = true;
   const box = $("login"); box.hidden = false;
-  const setup = st.needs_setup;
-  let asAdmin = false;
+  const setup = st.needs_setup || forceSetup;
+  let asAdmin = adminTab;
   box.innerHTML = `
       <form id="loginForm" novalidate>
-        ${setup ? `<h1>첫 관리자 계정 만들기</h1>`
+        ${setup ? `<h1>${forceSetup ? "관리자 회원가입" : "첫 관리자 계정 만들기"}</h1>`
         : `<h1>통합 로그인</h1>
-          <div class="seg" id="roleTab"><button type="button" aria-pressed="true">사용자</button><button type="button" aria-pressed="false">관리자</button></div>`}
+          <div class="seg" id="roleTab"><button type="button" aria-pressed="${!adminTab}">사용자</button><button type="button" aria-pressed="${adminTab}">관리자</button></div>`}
         <div class="field"><label for="lg_id">아이디</label><input type="text" id="lg_id" autocomplete="username" autocapitalize="off" placeholder="${setup ? "예) admin" : "teacher01"}"></div>
         ${setup ? `<div class="field"><label for="lg_name">이름</label><input type="text" id="lg_name" maxlength="30" placeholder="예) 김재형"></div>` : ""}
         <div class="field"><label for="lg_pw">비밀번호 ${setup ? `<span class="hint">8자 이상</span>` : ""}</label><input type="password" id="lg_pw" autocomplete="${setup ? "new-password" : "current-password"}"></div>
         ${setup ? `<div class="field"><label for="lg_pw2">비밀번호 확인</label><input type="password" id="lg_pw2" autocomplete="new-password"></div>`
-        : `<div class="opts"><label><input type="checkbox" id="lg_keep"> 로그인 상태 유지</label><a id="lg_find">비밀번호 찾기</a></div>`}
-        <div class="msg err" id="lg_err" style="${msg ? "" : "display:none"}">${esc(msg)}</div>
-        <button class="btn primary big block" type="submit">${setup ? "관리자 계정 만들고 시작하기" : "로그인"}</button>
-        ${setup ? "" : `<div class="note">계정이 없으면 관리자에게 권한을 요청하세요</div>`}
+        : `<div class="opts"><label><input type="checkbox" id="lg_keep"> 로그인 상태 유지</label>
+            <span class="optlinks"><a id="lg_signup" ${adminTab ? "" : "hidden"}>회원가입</a><a id="lg_find">비밀번호 찾기</a></span></div>`}
+        <div class="msg ${okMsg ? "ok" : "err"}" id="lg_err" style="${msg ? "" : "display:none"}">${esc(msg)}</div>
+        <button class="btn primary big block" type="submit">${setup ? (forceSetup ? "회원가입" : "관리자 계정 만들고 시작하기") : "로그인"}</button>
+        ${setup ? (forceSetup ? `<div class="note"><a id="lg_back">로그인으로 돌아가기</a></div>` : "") : `<div class="note">계정이 없으면 관리자에게 권한을 요청하세요</div>`}
       </form>`;
-  const err = (t) => { $("lg_err").style.display = ""; $("lg_err").textContent = t; };
+  const err = (t) => { $("lg_err").className = "msg err"; $("lg_err").style.display = ""; $("lg_err").textContent = t; };
+  if (forceSetup) $("lg_back").onclick = () => showLogin("", false, true);
   if (!setup) {
     const tabs = $("roleTab").children;
-    [...tabs].forEach((b, i) => b.onclick = () => { asAdmin = i === 1; tabs[0].setAttribute("aria-pressed", String(!asAdmin)); tabs[1].setAttribute("aria-pressed", String(asAdmin)); });
+    // '회원가입' 링크는 관리자 탭에서만 보임. 누르면 위의 만들기 화면으로 이동
+    [...tabs].forEach((b, i) => b.onclick = () => { asAdmin = i === 1; tabs[0].setAttribute("aria-pressed", String(!asAdmin)); tabs[1].setAttribute("aria-pressed", String(asAdmin)); $("lg_signup").hidden = !asAdmin; });
+    $("lg_signup").onclick = () => showLogin("", true);
     $("lg_find").onclick = () => err("비밀번호를 잊었으면 관리자에게 ‘비밀번호 초기화’를 요청하세요. 관리자가 임시 비밀번호를 알려 줍니다.");
   }
   $("lg_id").focus();
@@ -1370,6 +1379,10 @@ async function showLogin(msg = "") {
     try {
       if (setup) {
         if (password !== $("lg_pw2").value) return err("비밀번호 확인이 다릅니다.");
+        if (forceSetup) {                      // 관리자 회원가입: 새 관리자 계정을 바로 만듦 (자동 로그인은 안 함)
+          await api("/api/auth/admin-signup", jsonBody("POST", { username, name: $("lg_name").value.trim(), password }));
+          return showLogin(`관리자 계정(${username})이 만들어졌습니다. 로그인해 주세요.`, false, true, true);
+        }
         app.user = await api("/api/auth/setup", jsonBody("POST", { username, name: $("lg_name").value.trim(), password }));
       } else {
         app.user = await api("/api/auth/login", jsonBody("POST", { username, password, remember: $("lg_keep").checked, as_admin: asAdmin }));

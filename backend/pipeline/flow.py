@@ -75,7 +75,11 @@ from pipeline.align import AlignError, AlignResult, align
 from pipeline.read import ReadConfig, read_sheet
 
 
-# 이중 검증(규칙 기반 + CNN) 방식 선택: "v2" = dual_verify_v2 / None = 끔 (팀원 방식 그대로)
+# 칸 판독 방식 선택 (검수 개수 비교용)
+#   "v2"         : 규칙 기반 + CNN (dual_verify_v2)
+#   "rule_based" : 규칙 기반 단독, 팀원 잉크 농도 판독 그대로 (pipeline/rule_based.py. 임계값을 바꿔 보려면 그 파일의 [설정])
+#   "cnn_only"   : CNN 단독, 규칙 기반 값은 쓰지 않고 모든 칸을 CNN으로만 판정 (pipeline/cnn_only.py)
+#   None         : 이중 검증 단계를 건너뜀 = 팀원 판독 그대로 (임계값을 안 바꾸면 "rule_based" 와 같은 결과)
 DUAL_VERIFY = "v2"
 
 
@@ -83,9 +87,9 @@ def _dual_verify_module():
     """DUAL_VERIFY 설정에 맞는 이중 검증 모듈을 돌려줌 (끄면 None). 선택한 모듈만 불러옴 (끄면 torch 등도 불러오지 않음)."""
     if DUAL_VERIFY is None:
         return None
-    names = {"v2": "dual_verify_v2"}
+    names = {"v2": "dual_verify_v2", "rule_based": "pipeline.rule_based", "cnn_only": "pipeline.cnn_only"}
     if DUAL_VERIFY not in names:
-        raise ValueError(f"DUAL_VERIFY 값이 잘못됨: {DUAL_VERIFY!r} (v2 / None 중 하나)")
+        raise ValueError(f"DUAL_VERIFY 값이 잘못됨: {DUAL_VERIFY!r} (v2 / rule_based / cnn_only / None 중 하나)")
     return importlib.import_module(names[DUAL_VERIFY])
 
 
@@ -280,7 +284,7 @@ def run_photo(photo_bgr: np.ndarray, exam: dict[str, Any], layout: dict[str, Any
     if r.read["summary"].get("retake"):                        # 과노출 → 채점하지 않고 재촬영 안내
         r.status, r.error = TOO_BRIGHT, r.read["summary"].get("retake_reason") or "사진이 너무 밝음"
         return r
-    verifier = _dual_verify_module()                            # P3 보강: CNN 이중 검증 (DUAL_VERIFY 설정에 따라 v2 / 끔). 재촬영 판정 뒤에 함
+    verifier = _dual_verify_module()                            # P3 보강: CNN 이중 검증 (DUAL_VERIFY 설정에 따라 v2 / rule_based / cnn_only / 끔). 재촬영 판정 뒤에 함
     if verifier is not None:
         r.read = verifier.verify_sheet(r.read, r.align.warped, layout)
     if key is not None:

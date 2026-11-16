@@ -807,6 +807,13 @@ class SetupRequest(BaseModel):
     password: str
 
 
+class AdminSignupRequest(BaseModel):
+    """POST /api/auth/admin-signup 요청 본문 (관리자 회원가입)."""
+    username: str
+    name: str = ""
+    password: str
+
+
 class PasswordRequest(BaseModel):
     """POST /api/auth/password 요청 본문 (내 비밀번호 바꾸기)."""
     old_password: str
@@ -839,6 +846,22 @@ def auth_setup(req: SetupRequest, response: Response):
     except accounts.AccountError as e:
         raise HTTPException(409 if "이미" in str(e) else 422, str(e))
     return _login_response(response, user, False)
+
+
+@app.post("/api/auth/admin-signup", status_code=201)
+def auth_admin_signup(req: AdminSignupRequest):
+    """관리자 회원가입 (POST /api/auth/admin-signup). 로그인 화면 '관리자' 탭의 '회원가입'에서 씀.
+
+    기존 관리자 확인 없이 새 관리자 계정을 바로 만듦. 새 계정으로 자동 로그인하지는 않음 → 만든 뒤 로그인 화면에서 직접 로그인.
+
+    예외:
+        HTTP 409: 이미 있는 아이디
+        HTTP 422: 아이디 형식·비밀번호 규칙 위반
+    """
+    try:
+        return accounts.signup_admin(req.username, req.name, req.password)
+    except accounts.AccountError as e:
+        raise HTTPException(409 if "이미" in str(e) else 422, str(e))
 
 
 @app.post("/api/auth/login")
