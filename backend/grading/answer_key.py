@@ -20,7 +20,10 @@
       "num_questions": 20, "num_choices": 5,     # 객관식 문항 수, 문항당 선지 수
       "answers": {"1": [3], "2": [1, 4], ...},   # 여러 개면 그중 하나만 표시해도 정답 (복수 정답 인정)
       "points":  {"1": 2, ...},                   # 없으면 default_points
-      "default_points": 1                         # 배점을 따로 안 적은 문항의 기본 배점
+      "default_points": 1,                        # 배점을 따로 안 적은 문항의 기본 배점
+      "num_essays": 5,                            # 답안지에 인쇄된 서술형 칸 수
+      "essay_points": {"1": 5, "2": 3},           # 서술형 문항별 배점 (0 또는 없음 = 채점 안 함)
+      "essay_answers": {"1": "모범답안 ..."}      # 서술형 모범답안·채점 기준 (검수 화면에 보여 줌, 선택)
     }
     JSON은 키로 문자열만 쓸 수 있어서 문항 번호를 "1", "2" 처럼 문자열로 저장함
     (파이썬 안에서는 정수 1, 2로 바꿔서 씀)
@@ -34,6 +37,9 @@
       4행  (빈 줄)
       5행  문항 | 정답 | 배점      ← 머리글 행
       6행~ 1    |      | 1         ← 문항별 행 (정답 칸을 선생님이 채움)
+      ...
+      (빈 줄)
+      서술 1 | 모범답안 | 배점      ← 서술형 행 (배점 0 = 채점 안 함)
   정답 칸 표기: 숫자 3 하나, 또는 "1,4"처럼 쉼표로 구분한 복수 정답 인정 표기
   (parse_choices() 참고. 정답 칸이 문자열로 들어오는 경우의 현재 동작은 그 함수 설명의 '주의' 참고)
 
@@ -102,6 +108,9 @@ class AnswerKey:
         points: {문항 번호: 배점}. 따로 정한 문항만 들어 있음 (예: {5: 2.0})
         default_points: points에 없는 문항의 배점 (기본 1.0)
         exam_id: 어느 시험의 정답표인지 (예: "EX-20261012-ABC123", 모르면 "")
+        num_essays: 답안지에 인쇄된 서술형 칸 수 (예: 5, 없으면 0)
+        essay_points: {서술형 번호: 배점}. 0보다 큰 문항만 채점함 (검수 화면에서 선생님이 점수 입력)
+        essay_answers: {서술형 번호: 모범답안·채점 기준 글}. 채점에는 안 쓰고 검수 화면에 보여 주기만 함
     """
     num_questions: int                                      # 문항 수 (1번 ~ num_questions번)
     num_choices: int                                        # 선지 수 (선지 번호 1 ~ num_choices)
@@ -109,6 +118,23 @@ class AnswerKey:
     points: dict[int, float] = field(default_factory=dict)  # 문항 번호 → 배점 (따로 정한 문항만)
     default_points: float = 1.0                             # points에 없는 문항의 기본 배점
     exam_id: str = ""                                       # 시험 ID (없으면 빈 문자열)
+    num_essays: int = 0                                     # 서술형 칸 수 (1번 ~ num_essays번)
+    essay_points: dict[int, float] = field(default_factory=dict)   # 서술형 번호 → 배점
+    essay_answers: dict[int, str] = field(default_factory=dict)    # 서술형 번호 → 모범답안
+
+    @property
+    def graded_essays(self) -> list[int]:
+        """채점하는 서술형 번호 목록 (배점이 0보다 큰 문항만, 번호 순).
+
+        반환:
+            list[int] (예: essay_points={1: 5, 2: 0, 3: 3} → [1, 3])
+        """
+        return sorted(n for n, p in self.essay_points.items() if p > 0 and 1 <= n <= self.num_essays)
+
+    @property
+    def essay_total(self) -> float:
+        """서술형 만점 = 채점하는 서술형 배점의 합 (예: 5 + 3 → 8.0)."""
+        return float(sum(self.essay_points[n] for n in self.graded_essays))
 
     def point(self, q: int) -> float:
         """q번 배점. 따로 안 적은 문항은 default_points.
@@ -122,13 +148,18 @@ class AnswerKey:
 
     @property
     def total_points(self) -> float:
-        """만점 = 1번 ~ num_questions번 문항 배점의 합.
+        """만점 = 객관식 1번 ~ num_questions번 배점의 합 + 서술형 만점.
 
         속성처럼 key.total_points 로 씀 (괄호 없음).
         반환:
-            float 만점 (예: 20문항, 기본 배점 1 → 20.0)
+            float 만점 (예: 20문항, 기본 배점 1, 서술형 5점 2문항 → 30.0)
         """
-        return sum(self.point(q) for q in range(1, self.num_questions + 1))
+        return self.mcq_total + self.essay_total
+
+    @property
+    def mcq_total(self) -> float:
+        """객관식 만점 = 1번 ~ num_questions번 문항 배점의 합."""
+        return float(sum(self.point(q) for q in range(1, self.num_questions + 1)))
 
     def validate(self) -> None:
         """빈 정답, 범위 밖 문항·선지, 음수 배점 검사. 문제 있으면 AnswerKeyError.
@@ -158,6 +189,13 @@ class AnswerKey:
         for q, p in self.points.items():
             if p < 0:
                 raise AnswerKeyError(f"{q}번 배점이 음수입니다")
+        # 5. 서술형: 번호 범위(1 ~ num_essays)와 음수 배점
+        for n in set(self.essay_points) | set(self.essay_answers):
+            if not 1 <= n <= self.num_essays:
+                raise AnswerKeyError(f"서술형 {n}번은 서술형 범위(1~{self.num_essays}) 밖입니다")
+        for n, p in self.essay_points.items():
+            if p < 0:
+                raise AnswerKeyError(f"서술형 {n}번 배점이 음수입니다")
 
     def to_dict(self) -> dict[str, Any]:
         """JSON 저장용. JSON 키는 문자열만 되므로 문항 번호를 str로 바꿈.
@@ -175,6 +213,9 @@ class AnswerKey:
             "answers": {str(q): a for q, a in sorted(self.answers.items())},   # 문항 번호 → 문자열 키
             "points": {str(q): p for q, p in sorted(self.points.items())},
             "default_points": self.default_points,
+            "num_essays": self.num_essays,
+            "essay_points": {str(n): p for n, p in sorted(self.essay_points.items())},
+            "essay_answers": {str(n): a for n, a in sorted(self.essay_answers.items())},
         }
 
     @classmethod
@@ -201,6 +242,10 @@ class AnswerKey:
                 points={int(q): float(p) for q, p in (d.get("points") or {}).items()},
                 default_points=float(d.get("default_points", 1)),
                 exam_id=str(d.get("exam_id", "")),
+                num_essays=int(d.get("num_essays") or 0),
+                essay_points={int(n): float(p) for n, p in (d.get("essay_points") or {}).items()
+                              if p not in (None, "")},
+                essay_answers={int(n): str(a) for n, a in (d.get("essay_answers") or {}).items() if str(a or "").strip()},
             )
         except (KeyError, TypeError, ValueError) as e:      # 키 누락, 숫자 아닌 값 등
             raise AnswerKeyError(f"정답표 형식 오류: {e}") from e
@@ -266,14 +311,16 @@ def save_answer_key(key: AnswerKey, path: str) -> None:
         json.dump(key.to_dict(), f, ensure_ascii=False, indent=2)
 
 
-def load_answer_key(path: str, num_choices: int | None = None, exam_id: str = "") -> AnswerKey:
+def load_answer_key(path: str, num_choices: int | None = None, exam_id: str = "",
+                    num_essays: int | None = None) -> AnswerKey:
     """JSON 또는 엑셀(.xlsx) 정답표 불러오기. 확장자로 구분.
 
     매개변수:
         path: 정답표 파일 경로 (대소문자 상관없이 .json 또는 .xlsx로 끝나야 함)
         num_choices: 선지 수 (엑셀일 때만 사용. None이면 엑셀의 '선지 수' 칸, 그것도 없으면 5)
         exam_id: 시험 ID (엑셀일 때만 사용. ""이면 엑셀의 '시험 ID' 칸 값)
-                 JSON일 때는 두 값 모두 무시하고 파일 안의 값을 씀
+        num_essays: 서술형 칸 수 (엑셀일 때만 사용. None이면 엑셀에 적힌 '서술 N' 중 가장 큰 번호)
+                 JSON일 때는 세 값 모두 무시하고 파일 안의 값을 씀
     반환:
         검사를 통과한 AnswerKey
     예외:
@@ -283,11 +330,11 @@ def load_answer_key(path: str, num_choices: int | None = None, exam_id: str = ""
         with open(path, encoding="utf-8") as f:
             return AnswerKey.from_dict(json.load(f))
     if path.lower().endswith(".xlsx"):
-        return _load_xlsx(path, num_choices, exam_id)
+        return _load_xlsx(path, num_choices, exam_id, num_essays)
     raise AnswerKeyError("정답표는 .json 또는 .xlsx 파일이어야 합니다")
 
 
-def _load_xlsx(path: str, num_choices: int | None, exam_id: str) -> AnswerKey:
+def _load_xlsx(path: str, num_choices: int | None, exam_id: str, num_essays: int | None = None) -> AnswerKey:
     """엑셀 정답표 읽기 (load_answer_key 내부용).
 
     첫 번째(활성) 시트를 위에서부터 한 줄씩 읽음.
@@ -312,6 +359,8 @@ def _load_xlsx(path: str, num_choices: int | None, exam_id: str) -> AnswerKey:
     meta: dict[str, Any] = {}             # 머리글 위쪽 정보: {"시험 ID": ..., "선지 수": ...}
     answers: dict[int, list[int]] = {}    # 문항 번호 → 정답 선지 목록
     points: dict[int, float] = {}         # 문항 번호 → 배점 (배점 칸이 채워진 문항만)
+    essay_points: dict[int, float] = {}   # 서술형 번호 → 배점 ('서술 1' 같은 줄)
+    essay_answers: dict[int, str] = {}    # 서술형 번호 → 모범답안
     header_found = False                  # '문항 | 정답 | 배점' 머리글 행을 지났는지
     for row in ws.iter_rows(values_only=True):
         # 열이 3개보다 적은 줄도 a, b, c를 꺼낼 수 있게 None으로 채움
@@ -327,6 +376,17 @@ def _load_xlsx(path: str, num_choices: int | None, exam_id: str) -> AnswerKey:
         # 머리글 행 다음: 문항 번호가 없거나 숫자가 아니면(합계·메모 줄 등) 건너뜀
         if a is None or str(a).strip() == "":
             continue
+        m = re.fullmatch(r"서술\s*(\d+)", str(a).strip())     # 서술형 줄: A열 '서술 1', B열 모범답안, C열 배점
+        if m:
+            n = int(m.group(1))
+            if b not in (None, "") and str(b).strip():
+                essay_answers[n] = str(b).strip()
+            if c not in (None, ""):
+                try:
+                    essay_points[n] = float(str(c))
+                except ValueError as e:
+                    raise AnswerKeyError(f"서술형 {n}번 배점 '{c}'이(가) 숫자가 아닙니다") from e
+            continue
         try:
             q = int(str(a).strip())
         except ValueError:
@@ -341,14 +401,16 @@ def _load_xlsx(path: str, num_choices: int | None, exam_id: str) -> AnswerKey:
         raise AnswerKeyError("'문항 | 정답 | 배점' 머리글 행을 찾지 못했습니다")
     # 선지 수: 인자로 받은 값 우선 → 엑셀 '선지 수' 칸 → 기본 5
     k = num_choices or int(meta.get("선지 수") or 5)
+    ne = num_essays if num_essays is not None else max([0, *essay_points, *essay_answers])
     key = AnswerKey(num_questions=max(answers) if answers else 0, num_choices=k,
-                    answers=answers, points=points, exam_id=exam_id or str(meta.get("시험 ID") or ""))
+                    answers=answers, points=points, exam_id=exam_id or str(meta.get("시험 ID") or ""),
+                    num_essays=ne, essay_points=essay_points, essay_answers=essay_answers)
     key.validate()
     return key
 
 
 def answer_key_template(path: str, num_questions: int, num_choices: int, exam_id: str = "",
-                        default_points: float = 1) -> str:
+                        default_points: float = 1, num_essays: int = 0) -> str:
     """선생님이 채워 넣을 빈 정답표 엑셀 만들기.
     위쪽 3줄: 시험 ID·선지 수·작성법 / 5번째 줄: '문항 | 정답 | 배점' 머리글 / 그 아래 문항별 행.
 
@@ -363,6 +425,7 @@ def answer_key_template(path: str, num_questions: int, num_choices: int, exam_id
         num_choices: 선지 수 (예: 5, 작성법 안내 문구에도 들어감)
         exam_id: 시험 ID (1행 B열에 기록, 기본 "")
         default_points: 문항별 기본 배점 (기본 1)
+        num_essays: 서술형 칸 수 (예: 5 → 객관식 아래에 '서술 1'~'서술 5' 줄, 배점 0으로 채움)
     반환:
         저장한 파일 경로 (path 그대로)
     """
@@ -373,12 +436,17 @@ def answer_key_template(path: str, num_questions: int, num_choices: int, exam_id
     # 1~3행: 시험 정보와 작성법, 4행: 빈 줄, 5행: 머리글
     ws.append(["시험 ID", exam_id])
     ws.append(["선지 수", num_choices])
-    ws.append(["작성법", f"정답 칸에 1~{num_choices} 숫자 입력. 복수 정답 인정은 '1,4'처럼 쉼표로 구분"])
+    ws.append(["작성법", f"정답 칸에 1~{num_choices} 숫자 입력. 복수 정답 인정은 '1,4'처럼 쉼표로 구분. "
+                         "서술형은 정답 칸에 모범답안, 배점 0은 채점 안 함"])
     ws.append([])
     ws.append(["문항", "정답", "배점"])
     head = ws.max_row                     # 머리글 행 번호 (= 5)
     for q in range(1, num_questions + 1):
         ws.append([q, None, default_points])
+    if num_essays:
+        ws.append([])
+        for n in range(1, num_essays + 1):
+            ws.append([f"서술 {n}", None, 0])
     # 서식: 머리글 굵게·하늘색 배경·가운데 정렬, 1~3행 항목 이름 굵게, 열 너비
     bold = Font(bold=True)
     for cell in ws[head]:
@@ -388,13 +456,13 @@ def answer_key_template(path: str, num_questions: int, num_choices: int, exam_id
     for r in (1, 2, 3):
         ws.cell(r, 1).font = bold
     ws.column_dimensions["A"].width = 10
-    ws.column_dimensions["B"].width = 14
+    ws.column_dimensions["B"].width = 40 if num_essays else 14
     ws.column_dimensions["C"].width = 10
     # 배점 칸(C열 문항 행 전체)에 "0 이상의 숫자"만 입력되게 데이터 유효성 검사 추가
     dv = DataValidation(type="decimal", operator="greaterThanOrEqual", formula1="0",
                         error="배점은 0 이상의 숫자")
     ws.add_data_validation(dv)
-    dv.add(f"C{head + 1}:C{head + num_questions}")
+    dv.add(f"C{head + 1}:C{ws.max_row}")
     ws.freeze_panes = f"A{head + 1}"      # 머리글 아래부터 스크롤 (머리글은 항상 보임)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     wb.save(path)

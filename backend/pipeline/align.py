@@ -29,7 +29,8 @@
   3. 사진 속 마커 코너 ↔ frame.py에 저장된 코너 좌표 짝짓기 (마커당 4점)
   4. 호모그래피(원근 변환 행렬) 계산 — 코너 12~16점 + RANSAC(튀는 점 제외)
   5. warpPerspective로 정면 이미지로 펴기
-  6. 펴진 이미지의 고정 위치에서 QR 읽기 (실패하면 원본 사진 전체에서 한 번 더)
+  6. 펴진 이미지의 고정 위치에서 QR 읽기 (실패하면 원본에서 QR 영역만 600dpi로 다시 펴서 / 이진화해서 /
+     원본 사진 전체에서 차례로 다시 시도. read_qr 참고)
 
 [왜 마커 중심 4점이 아니라 코너 16점?]
   - 점이 많을수록 오차가 평균되어 정확함
@@ -49,7 +50,9 @@
   - AlignError              : 정렬 불가(마커 부족 등)일 때 나는 예외 → 재촬영 안내
   - AlignResult             : 정렬 결과 묶음 (warped, H, 방향, 품질 지표, QR)
   - _detector()             : ArUco 마커 검출기 생성 (내부용)
-  - _read_qr()              : QR 읽기 (OpenCV 내부 오류도 "못 읽음"으로 처리, 내부용)
+  - _read_qr()              : QR 읽기 한 번 (OpenCV 내부 오류도 "못 읽음"으로 처리, 내부용)
+  - _qr_candidates()        : QR을 읽어 볼 이미지 후보 (정렬 이미지 → 고해상도 재추출 → 이진화, 내부용)
+  - read_qr()               : QR 여러 번 시도해서 읽기 (후보 × 검출기 2종 → 원본 전체)
   - align()                 : P1 메인 함수. 사진 → AlignResult
   - load_template_registry(): 폴더의 *.layout.json을 (양식 ID, 버전) → layout 사전으로 읽기
   - crop_regions()          : 정렬 이미지에서 칸별 작은 이미지 잘라내기 (CNN 학습·검수·OCR용)
@@ -105,6 +108,7 @@ class AlignResult:
     blur_var: float                    # 라플라시안 분산 (낮을수록 흐림). 재촬영 기준값은 실사진으로 정할 예정
     qr_text: str | None = None         # QR 원문
     qr_info: dict | None = None        # QR 해석 결과 (parse_qr_payload). 못 읽으면 None
+    qr_method: str = ""                # QR을 읽은 방법 ("warped"/"hires"/"binary"/"photo", 못 읽으면 "", 형식 다름 "other")
     notes: list[str] = field(default_factory=list)   # 경고 메시지 (마커 일부 누락 등)
     marker_set: str = "team"           # 정렬에 쓴 마커 세트 ("team" 팀 양식 / "print" 실제 인쇄본)
 
@@ -127,22 +131,90 @@ def _detector(dict_name: str):
 
 
 def _read_qr(qd, img) -> str:
-    """QR 읽기. 못 읽으면 빈 문자열.
+    """QR 읽기 한 번. 못 읽으면 빈 문자열.
 
     OpenCV QR 검출기가 QR이 없는 사진 일부에서 내부 오류(cv2.error, convexHull)를 내는 경우가 있어서
     (합성 데이터셋의 빈 QR 칸 사진에서 확인) 오류도 '못 읽음'으로 처리함.
 
     매개변수:
-        qd: cv2.QRCodeDetector 객체
-        img: QR을 찾을 이미지 (BGR 배열)
+        qd: cv2.QRCodeDetector 또는 cv2.QRCodeDetectorAruco 객체
+        img: QR을 찾을 이미지 (BGR 또는 흑백 배열)
     반환:
         QR 문자열 (못 읽으면 "")
     """
+    if img is None or img.size == 0:
+        return ""
     try:
         text, _, _ = qd.detectAndDecode(img)
     except cv2.error:
         return ""
     return text or ""
+
+
+# QR 고해상도 재추출 배율. 정렬 이미지(200dpi)에서는 QR 모듈 한 칸이 약 4px뿐이라
+# 시험명·과목명이 길어 QR이 촘촘해지면(모듈 45~57칸) 잘 안 읽힘
+# → 원본 사진에서 QR 영역만 600dpi(모듈 약 12px)로 다시 펴서 읽음. 원본 사진 해상도가 그보다 낮아도 보간으로 키워서 읽기가 쉬워짐
+QR_HI_SCALE = 3
+
+
+def _qr_candidates(photo_bgr: np.ndarray, warped: np.ndarray, H: np.ndarray, orientation: str, dpi: int):
+    """QR을 읽어 볼 이미지 후보를 쉬운 것부터 차례로 만들어 냄 (generator → 앞에서 읽히면 뒤는 안 만듦).
+
+    순서:
+        1. "warped"  : 정렬 이미지의 QR 고정 위치 (+3mm 여유)를 그대로
+        2. "hires"   : 원본 사진에서 QR 영역만 3배 해상도(600dpi)로 다시 펴기 (H 행렬 재사용)
+        3. "binary"  : 2를 흑백 이진화(Otsu)한 것 — 조명 얼룩·그림자로 모듈 명암이 고르지 않을 때
+    매개변수:
+        photo_bgr: 원본 사진, warped: 정렬 이미지, H: 사진→정렬 이미지 변환 행렬
+        orientation: "portrait"/"landscape", dpi: 정렬 이미지 dpi
+    반환(하나씩):
+        (이름, 이미지)
+    """
+    x, y, bw, bh = bbox_to_px(F.ORIENTATIONS[orientation]["qr_bbox_mm"], dpi)   # QR 영역 (왼쪽 위 x, y, 너비, 높이) px
+    m = int(mm_to_px(3, dpi))   # QR 주변 3mm 여유 (정렬 오차·여백 대비)
+    x0, y0 = max(0, x - m), max(0, y - m)
+    yield "warped", warped[y0:y + bh + m, x0:x + bw + m]
+    # 사진 좌표 → (정렬 이미지 좌표) → QR 영역을 잘라 k배 키운 좌표 로 한 번에 옮기는 행렬
+    k = QR_HI_SCALE
+    S = np.array([[k, 0, -x0 * k], [0, k, -y0 * k], [0, 0, 1]], dtype=np.float64)
+    size = ((x + bw + m - x0) * k, (y + bh + m - y0) * k)
+    hi = cv2.warpPerspective(photo_bgr, S @ H, size, flags=cv2.INTER_CUBIC,
+                             borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255))
+    yield "hires", hi
+    g = cv2.GaussianBlur(cv2.cvtColor(hi, cv2.COLOR_BGR2GRAY), (0, 0), 1.0)
+    _, binary = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    yield "binary", binary
+
+
+def read_qr(photo_bgr: np.ndarray, warped: np.ndarray, H: np.ndarray, orientation: str,
+            dpi: int = F.CANONICAL_DPI) -> tuple[str, str]:
+    """QR 읽기 (여러 번 시도). 정렬이 끝난 뒤 align()이 부름.
+
+    후보 이미지(_qr_candidates) × 검출기 2종(기본 QRCodeDetector, ArUco 방식 QRCodeDetectorAruco)을
+    차례로 시도하고, 우리 QR 형식("CM1|...")으로 해석되는 첫 결과를 돌려줌.
+    모두 실패하면 원본 사진 전체에서 마지막으로 한 번 더 찾음 (QR 위치가 양식과 다른 답안지 대비).
+
+    매개변수:
+        photo_bgr: 원본 사진, warped: 정렬 이미지, H: 사진→정렬 이미지 변환 행렬
+        orientation: "portrait"/"landscape", dpi: 정렬 이미지 dpi (기본 200)
+    반환:
+        (QR 문자열, 읽은 방법) — 읽은 방법은 "warped" / "hires" / "binary" / "photo" 등
+        못 읽으면 ("", "")
+        우리 형식이 아닌 QR만 읽혔으면 (그 문자열, "other") → 호출한 쪽에서 qr_info=None 처리
+    """
+    detectors = [cv2.QRCodeDetector(), cv2.QRCodeDetectorAruco()]
+    other = ""   # 읽히긴 했지만 우리 형식이 아닌 QR (예: 다른 QR 스티커)
+    for name, img in _qr_candidates(photo_bgr, warped, H, orientation, dpi):
+        for qd in detectors:
+            text = _read_qr(qd, img)
+            if text and parse_qr_payload(text):
+                return text, name
+            other = other or text
+    text = _read_qr(detectors[0], photo_bgr)
+    if text and parse_qr_payload(text):
+        return text, "photo"
+    other = other or text
+    return (other, "other") if other else ("", "")
 
 
 def align(photo_bgr: np.ndarray, dpi: int = F.CANONICAL_DPI, min_markers: int = 3) -> AlignResult:
@@ -220,18 +292,16 @@ def align(photo_bgr: np.ndarray, dpi: int = F.CANONICAL_DPI, min_markers: int = 
     if len(found) < 4:
         res.notes.append(f"마커 {4 - len(found)}개 누락 — 나머지로 정렬함")
 
-    # 5) QR: 정렬된 이미지의 고정 위치에서 먼저, 실패하면 원본 사진 전체에서
+    # 5) QR: 정렬된 이미지의 고정 위치 → 원본에서 QR 영역만 고해상도로 → 이진화 → 원본 전체 순서로 시도 (read_qr)
     #    고정 위치를 먼저 보는 이유: 작은 영역만 보면 빠르고, 펴진 이미지라 QR이 반듯해서 잘 읽힘
-    qd = cv2.QRCodeDetector()
-    x, y, bw, bh = bbox_to_px(F.ORIENTATIONS[orientation]["qr_bbox_mm"], dpi)   # QR 영역 (왼쪽 위 x, y, 너비, 높이) px
-    m = int(mm_to_px(3, dpi))   # QR 주변 3mm 여유를 두고 자름 (정렬 오차·여백 대비)
-    text = _read_qr(qd, warped[max(0, y - m):y + bh + m, max(0, x - m):x + bw + m])
-    if not text:
-        text = _read_qr(qd, photo_bgr)
-        if text:
-            res.notes.append("QR을 정렬 이미지에서 못 읽어 원본에서 읽음")
+    text, how = read_qr(photo_bgr, warped, H, orientation, dpi)
     res.qr_text = text or None                                        # 빈 문자열이면 None으로 통일
-    res.qr_info = parse_qr_payload(text) if text else None            # "CM1|시험ID|양식ID|버전|과목|시험명" → dict
+    res.qr_info = parse_qr_payload(text) if text else None            # "CM1|시험ID|양식ID|버전(|과목|시험명)" → dict
+    res.qr_method = how
+    if how == "photo":
+        res.notes.append("QR을 정렬 이미지에서 못 읽어 원본에서 읽음")
+    elif how == "other":
+        res.notes.append("CheckMate 형식이 아닌 QR만 읽힘")
     return res
 
 

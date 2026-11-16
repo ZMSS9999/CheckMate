@@ -32,7 +32,7 @@
 [3주차 회의 결정 반영]
   - 객관식 문항 수 5~45, 선지 수 2~5 (웹에서 입력)
   - 주관식 5문항 고정 (단답형~한 문장)
-  - 시험지에 쓰는 것은 이름·학번뿐, 시험명·과목명은 QR에만 저장
+  - 시험지에 쓰는 것은 이름·학번뿐, 시험명·과목명은 인쇄하지 않고 exam.json에 저장 (QR에는 frame.QR_WITH_NAMES=True일 때만)
   - 세로(portrait) / 가로(landscape) 두 가지 배치
   - JSON 항목명: template_id, template_version
 
@@ -469,7 +469,10 @@ def compute_layout(spec: SheetSpec) -> dict:
     frame = F.frame_dict(spec.orientation)
     # 좌표 전체의 지문(해시). 같은 id·version인데 해시가 다르면 = 배치 코드가 바뀌었는데 버전을 안 올린 것
     # (sort_keys=True로 키 순서를 고정해야 같은 좌표면 항상 같은 해시가 나옴)
-    geometry_hash = hashlib.sha1(json.dumps({"frame": frame, "g": geometry}, sort_keys=True)
+    # qr.format 은 QR 내용 설명 글일 뿐 좌표가 아님 → 해시에는 예전 6칸 형식 글을 고정해서 넣음
+    # (11/13 QR 4칸 형식으로 바꾸며 설명 글이 달라져 저장된 양식과 해시가 어긋났던 문제 방지. 좌표는 그대로)
+    frame_for_hash = {**frame, "qr": {**frame["qr"], "format": F.QR_FORMAT_V1}}
+    geometry_hash = hashlib.sha1(json.dumps({"frame": frame_for_hash, "g": geometry}, sort_keys=True)
                                  .encode()).hexdigest()[:12]
     return {
         "schema_version": SCHEMA_VERSION,
@@ -485,8 +488,12 @@ def compute_layout(spec: SheetSpec) -> dict:
 
 
 # ---------- QR ----------
-def make_qr_payload(exam_id: str, template_id: str, template_version: str, subject: str, exam_name: str) -> str:
-    """QR 내용 만들기: CM1|시험ID|양식ID|양식버전|과목명|시험명 ('|'로 구분).
+def make_qr_payload(exam_id: str, template_id: str, template_version: str, subject: str, exam_name: str,
+                    with_names: bool | None = None) -> str:
+    """QR 내용 만들기: CM1|시험ID|양식ID|양식버전 (+ |과목명|시험명) ('|'로 구분).
+
+    기본(frame.QR_WITH_NAMES=False)은 4칸만 넣음 → QR이 작고 성겨서 흐린 사진에서도 잘 읽힘.
+    with_names=True(또는 QR_WITH_NAMES=True)면 예전 6칸 형식으로 과목명·시험명까지 넣음.
 
     app/service.py가 답안지를 만들 때 부르고, 결과 문자열은 render_pdf.py가 QR로 그림.
     P1 정렬 후 parse_qr_payload()로 다시 풀어서 P2 시험 확인에 씀.
@@ -497,20 +504,27 @@ def make_qr_payload(exam_id: str, template_id: str, template_version: str, subje
         template_version: 양식 버전 (예: "1")
         subject: 과목명 (빈 문자열 가능, 예: "컴퓨터비전")
         exam_name: 시험명 (빈 문자열 가능, 예: "2026학년도 2학기 중간고사")
+        with_names: 과목명·시험명을 넣을지 (None이면 frame.QR_WITH_NAMES를 따름)
     반환:
-        QR 문자열 (예: "CM1|EX-20261001-8C7353|P45Q5C|1|컴퓨터비전|2026학년도 2학기 중간고사")
+        QR 문자열 (예: "CM1|EX-20261001-8C7353|P45Q5C|1")
+        with_names=True 예: "CM1|EX-20261001-8C7353|P45Q5C|1|컴퓨터비전|2026학년도 2학기 중간고사"
     예외:
         ValueError: 시험 ID·과목명·시험명에 구분 문자 '|'가 들어 있을 때 (해석할 때 칸이 어긋나므로)
     """
     for v in (exam_id, subject, exam_name):
         if "|" in v:
             raise ValueError("시험 정보에는 '|' 문자를 쓸 수 없습니다")
-    return "|".join([F.QR_PREFIX, exam_id, template_id, template_version, subject, exam_name])
+    parts = [F.QR_PREFIX, exam_id, template_id, template_version]
+    if F.QR_WITH_NAMES if with_names is None else with_names:
+        parts += [subject, exam_name]
+    return "|".join(parts)
 
 
 def parse_qr_payload(text: str) -> dict | None:
     """QR 문자열 → {"exam_id", "template_id", "template_version", "subject", "exam_name"}.
     형식이 다르거나 우리 QR(CM1)이 아니면 None.
+    4칸 형식(지금 기본)과 6칸 형식(과목명·시험명 포함, 이전에 인쇄한 답안지) 둘 다 읽음.
+    4칸이면 subject·exam_name은 빈 문자열.
 
     make_qr_payload()의 반대 동작. pipeline/align.py(P1 정렬)가 QR을 읽은 뒤 부름.
 
@@ -519,11 +533,13 @@ def parse_qr_payload(text: str) -> dict | None:
     반환:
         dict (예: {"exam_id": "EX-20261001-8C7353", "template_id": "P45Q5C", "template_version": "1",
                    "subject": "컴퓨터비전", "exam_name": "중간고사"})
-        또는 '|'로 나눈 조각이 6개가 아니거나 첫 조각이 "CM1"이 아니면 None
+        또는 '|'로 나눈 조각이 4개·6개가 아니거나, 첫 조각이 "CM1"이 아니거나, 시험 ID가 비어 있으면 None
     """
     parts = text.split("|")
-    if len(parts) != 6 or parts[0] != F.QR_PREFIX:
+    if len(parts) not in (4, 6) or parts[0] != F.QR_PREFIX or not parts[1]:
         return None
+    if len(parts) == 4:
+        parts += ["", ""]
     # 첫 조각(CM1 표식)은 빼고 나머지 5개를 이름과 짝지음
     return dict(zip(["exam_id", "template_id", "template_version", "subject", "exam_name"], parts[1:]))
 

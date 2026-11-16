@@ -268,7 +268,7 @@ def render_pdf(layout: dict, exam: dict, out_path: str, font_path: str | None = 
                show_exam_info: bool = False) -> None:
     """PDF 생성 메인 함수.
     exam: {"exam_id", "exam_name", "subject", "qr_payload"} (service.create_answer_sheet에서 만듦)
-    show_exam_info: True면 시험명·과목명도 인쇄 (회의 결정상 기본은 QR에만 넣음)
+    show_exam_info: True면 시험명·과목명도 인쇄 (회의 결정상 기본은 인쇄 안 함)
 
     그리는 순서: 1) ArUco 마커 → 2) 제목 → 3) 바깥 테두리 → 4) 이름·QR 패널 → 5) 학번 → 6) 객관식 → 7) 주관식 → 8) 바닥글
 
@@ -301,7 +301,7 @@ def render_pdf(layout: dict, exam: dict, out_path: str, font_path: str | None = 
         x, y = m["corners_mm"][0]
         _draw_aruco(pen, m["id"], x, y, fr["aruco"]["marker_size_mm"])
 
-    # 2) 제목 (시험명·과목명은 QR에만 넣고 기본적으로 인쇄하지 않음)
+    # 2) 제목 (시험명·과목명은 기본적으로 인쇄하지 않음)
     tx, ty = layout["title_center_mm"]
     pen.text(tx, ty + 3, "OMR 답안지", size=24, align="center")
     if show_exam_info:

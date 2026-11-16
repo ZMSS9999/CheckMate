@@ -47,7 +47,7 @@
     notes         참고 메모 목록 (예: "QR을 읽지 못해 선택한 시험의 양식으로 판독함")
     align         정렬 요약 (방향, 찾은 마커 ID, 재투영 오차, 흐림 정도, QR 읽기 성공 여부)
     read          P3 판독 결과 (문항별 답·칸별 채움 비율·학번). 검수 후에도 바꾸지 않음
-    review        검수 기록 {"corrections": {문항: 답}, "student_id": 학번, "updated_at": 시각}
+    review        검수 기록 {"corrections": {문항: 답}, "student_id": 학번, "essay": {서술형 번호: 점수}, "updated_at": 시각}
 
 [채점(P4)을 업로드 때 하지 않고 엑셀 만들 때 하는 이유]
   정답표가 나중에 바뀌거나 검수에서 답이 고쳐질 수 있음
@@ -61,6 +61,7 @@
   get_answer_key()            저장된 정답표 읽기
   decode_image()              업로드 바이트 → 이미지 배열
   process_photo()             사진 1장 P1·P2·P3 → 저장
+  route_photo()               시험을 안 고른 사진 1장 → QR로 시험 찾기 → process_photo (시험 자동 분류)
   list_sheets()               저장된 답안지 기록 전체
   get_sheet()                 답안지 한 장 기록
   review_sheet()              검수 수정 저장
@@ -89,6 +90,7 @@ import numpy as np
 from grading import AnswerKey, answer_key_template, load_answer_key, parse_choices, save_answer_key
 from grading.score import retake_record
 from pipeline import flow
+from pipeline.align import AlignError, AlignResult
 from pipeline.read import ReadConfig
 from grading import AnswerKeyError
 from . import access, service
@@ -158,6 +160,11 @@ def _exam_and_layout(exam_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 # ---------------- 정답표 (P4의 입력) ----------------
+def _num_essays(layout: dict[str, Any]) -> int:
+    """양식에 인쇄된 서술형 칸 수 (예: 5). 서술형 칸이 없는 양식이면 0."""
+    return len((layout.get("short_answers") or {}).get("items", []))
+
+
 def answer_key_path(exam_id: str) -> str:
     """이 시험의 정답표 JSON 파일 경로 (파일이 있는지는 확인하지 않음).
 
@@ -184,13 +191,15 @@ def make_answer_key_template(exam_id: str) -> str:
         ExamNotFoundError: 시험이 없음
         RuntimeError: 양식 파일이 없음
     """
-    exam, _ = _exam_and_layout(exam_id)
+    exam, layout = _exam_and_layout(exam_id)
     path = os.path.join(_exam_dir(exam_id), "answer_key_template.xlsx")
-    return answer_key_template(path, exam["num_questions"], exam["num_choices"], exam_id)
+    return answer_key_template(path, exam["num_questions"], exam["num_choices"], exam_id,
+                               num_essays=_num_essays(layout))
 
 
 def set_answer_key(exam_id: str, answers: dict[Any, Any], points: dict[Any, Any] | None = None,
-                   default_points: float = 1) -> AnswerKey:
+                   default_points: float = 1, essay_points: dict[Any, Any] | None = None,
+                   essay_answers: dict[Any, Any] | None = None) -> AnswerKey:
     """웹에서 JSON으로 받은 정답표 저장. 문항 수·선지 수는 시험 기록에서 가져옴 (입력 실수 방지).
 
     이미 정답표가 있으면 덮어씀.
@@ -200,16 +209,20 @@ def set_answer_key(exam_id: str, answers: dict[Any, Any], points: dict[Any, Any]
         answers: 문항별 정답 (예: {"1": 3, "2": [1, 4]} → 2번은 1 또는 4 인정)
         points: 문항별 배점 (예: {"5": 2}). None 또는 생략이면 모두 default_points
         default_points: 배점을 따로 적지 않은 문항의 점수 (기본 1)
+        essay_points: 서술형 배점 (예: {"1": 5, "2": 3}). 0 또는 없음 = 채점 안 함
+        essay_answers: 서술형 모범답안 (예: {"1": "광합성은 ..."}), 검수 화면에 보여 줌
     반환:
         저장된 AnswerKey 객체
     예외:
         ExamNotFoundError: 시험이 없음
         AnswerKeyError: 정답이 비어 있거나 선지 범위 밖인 등 정답표 내용 오류
     """
-    exam, _ = _exam_and_layout(exam_id)
+    exam, layout = _exam_and_layout(exam_id)
     key = AnswerKey.from_dict({"exam_id": exam_id, "num_questions": exam["num_questions"],
                                "num_choices": exam["num_choices"], "answers": answers,
-                               "points": points or {}, "default_points": default_points})
+                               "points": points or {}, "default_points": default_points,
+                               "num_essays": _num_essays(layout), "essay_points": essay_points or {},
+                               "essay_answers": essay_answers or {}})
     save_answer_key(key, answer_key_path(exam_id))
     _drop_draft(exam_id)
     return key
@@ -231,8 +244,10 @@ def import_answer_key(exam_id: str, path: str) -> AnswerKey:
         AnswerKeyError: 정답표 내용·형식 오류
         ValueError: 문항 수·선지 수가 시험과 다름
     """
-    exam, _ = _exam_and_layout(exam_id)
-    key = load_answer_key(path, num_choices=exam["num_choices"], exam_id=exam_id)
+    exam, layout = _exam_and_layout(exam_id)
+    key = load_answer_key(path, num_choices=exam["num_choices"], exam_id=exam_id, num_essays=_num_essays(layout))
+    key.num_essays = _num_essays(layout)    # JSON 정답표여도 서술형 칸 수는 이 시험 양식 기준
+    key.validate()
     if key.num_questions != exam["num_questions"] or key.num_choices != exam["num_choices"]:
         raise ValueError(f"정답표({key.num_questions}문항·{key.num_choices}지)가 시험"
                          f"({exam['num_questions']}문항·{exam['num_choices']}지)과 다릅니다")
@@ -275,7 +290,7 @@ def decode_image(data: bytes) -> np.ndarray:
 
 
 def process_photo(exam_id: str, photo_bgr: np.ndarray, source: str = "",
-                  cfg: ReadConfig | None = None) -> dict[str, Any]:
+                  cfg: ReadConfig | None = None, aligned: AlignResult | None = None) -> dict[str, Any]:
     """사진 1장을 파이프라인 P1정렬 → P2시험 확인 → P3판독에 통과시키고 결과를 저장.
     - 정렬 실패      → status "align_failed"로 저장 (엑셀에 '재촬영 필요'로 표시)
     - 과노출·부분 반사 → status "too_bright"로 저장 (재촬영 필요, 판독 결과는 참고용으로 남김)
@@ -290,18 +305,19 @@ def process_photo(exam_id: str, photo_bgr: np.ndarray, source: str = "",
         photo_bgr: 답안지 사진 (decode_image 결과, BGR 이미지 배열)
         source: 원래 파일 이름 등 사진 출처 (예: "photo1.jpg"). 엑셀·목록에 표시
         cfg: 판독 기준값 (ReadConfig). None이면 기본값 (마킹 0.60 / 애매 0.25)
+        aligned: 이미 끝낸 P1 정렬 결과 (route_photo가 QR로 시험을 찾은 뒤 넘김). None이면 여기서 정렬
     반환:
         답안지 기록 dict (모듈 설명의 sheets/<sheet_id>.json 내용과 같음). 예:
         {"sheet_id": "S-1A2B3C4D", "exam_id": "EX-...", "source": "photo1.jpg",
          "processed_at": "2026-10-13T15:00:00+09:00", "status": "read", "error": None,
          "notes": [], "align": {...}, "read": {...},
-         "review": {"corrections": {}, "student_id": None}}
+         "review": {"corrections": {}, "student_id": None, "essay": {}}}
     예외:
         ExamNotFoundError: 시험이 없음
         RuntimeError: 양식 파일이 없음
     """
     exam, layout = _exam_and_layout(exam_id)
-    result = flow.run_photo(photo_bgr, exam, layout, key=None, cfg=cfg, source=source)   # P1·P2·P3
+    result = flow.run_photo(photo_bgr, exam, layout, key=None, cfg=cfg, source=source, aligned=aligned)   # P1·P2·P3
 
     # 답안지 ID: "S-" + 무작위 4바이트를 16진수 대문자 8자리로 (예: S-1A2B3C4D)
     sheet_id = f"S-{secrets.token_hex(4).upper()}"
@@ -311,7 +327,7 @@ def process_photo(exam_id: str, photo_bgr: np.ndarray, source: str = "",
         "status": result.status, "error": result.error, "notes": result.notes,
         "align": result.align_summary(),
         "read": result.read,                                    # P4의 입력이 될 값
-        "review": {"corrections": {}, "student_id": None},      # 검수에서 채울 칸
+        "review": {"corrections": {}, "student_id": None, "essay": {}},   # 검수에서 채울 칸
     }
     # 다른 시험 답안지는 이 시험 폴더에 남기지 않음
     if result.status == flow.WRONG_EXAM:
@@ -336,6 +352,45 @@ def _save_sheet(rec: dict[str, Any]) -> dict[str, Any]:
     with open(os.path.join(_sheets_dir(rec["exam_id"]), f"{rec['sheet_id']}.json"), "w", encoding="utf-8") as f:
         json.dump(rec, f, ensure_ascii=False, indent=1)
     return rec
+
+
+# 시험 자동 분류(route_photo) 결과 status 중 저장하지 않는 것
+NO_QR = "no_qr"                  # QR을 못 읽음 → 사람이 시험을 골라 다시 올려야 함
+UNKNOWN_EXAM = "unknown_exam"    # QR의 시험이 없거나, 올린 사람에게 사진 올리기 권한이 없음
+
+
+def route_photo(photo_bgr: np.ndarray, source: str, can_upload, cfg: ReadConfig | None = None) -> dict[str, Any]:
+    """시험을 고르지 않고 올린 사진 1장 → QR의 시험 ID로 시험을 찾아 그 시험에 저장 (시험 자동 분류).
+
+    처리 순서:
+        1. P1 정렬 (마커 → 정면 이미지 + QR)
+        2. QR의 시험 ID로 시험 찾기 + 올린 사람이 그 시험에 사진을 올릴 수 있는지 확인(can_upload)
+        3. 찾았으면 process_photo(정렬 결과 재사용) → 그 시험 폴더에 저장 (P2 양식 확인·P3 판독 포함)
+    못 찾은 경우는 어느 시험에도 저장하지 않고 status로만 알려 줌:
+        "align_failed" : 정렬 실패 (시험을 알 수 없어서 저장 못 함 → 재촬영)
+        "no_qr"        : QR을 못 읽음 → 웹에서 시험을 골라 그 시험으로 다시 올림
+        "unknown_exam" : QR의 시험이 없음 / 권한 없음
+
+    매개변수:
+        photo_bgr: 사진 (BGR 배열), source: 파일 이름
+        can_upload: 함수 (시험 ID → True/False). 이 사람이 그 시험에 사진을 올릴 수 있는지 (main.py가 권한으로 만듦)
+        cfg: 판독 기준값
+    반환:
+        process_photo 기록 dict (+ "exam_id") 또는 저장 안 한 경우 {"source", "status", "error", "exam_id"(있으면)}
+    """
+    try:
+        res = flow.step_align(photo_bgr)
+    except AlignError as e:
+        return {"source": source, "status": flow.ALIGN_FAILED, "error": str(e), "exam_id": None}
+    q = res.qr_info
+    if not q:
+        return {"source": source, "status": NO_QR, "exam_id": None,
+                "error": "QR을 읽지 못했습니다. 시험을 골라 주세요"}
+    exam_id = q["exam_id"]
+    if not service.get_exam(exam_id) or not can_upload(exam_id):
+        return {"source": source, "status": UNKNOWN_EXAM, "exam_id": exam_id,
+                "error": f"시험 {exam_id}을(를) 찾을 수 없거나 사진을 올릴 권한이 없습니다"}
+    return process_photo(exam_id, photo_bgr, source, cfg=cfg, aligned=res)
 
 
 def list_sheets(exam_id: str) -> list[dict[str, Any]]:
@@ -437,7 +492,7 @@ def aligned_image_path(exam_id: str, sheet_id: str) -> str | None:
 
 
 def review_sheet(exam_id: str, sheet_id: str, corrections: dict[Any, Any] | None = None,
-                 student_id: str | None = None) -> dict[str, Any]:
+                 student_id: str | None = None, essay_scores: dict[Any, Any] | None = None) -> dict[str, Any]:
     """검수에서 선생님이 확인·수정한 답 기록. 판독 원본(read)은 그대로 두고 review 칸에만 씀
     → 나중에 '자동 판독 vs 사람 수정' 비교(검수 부담 실험, RQ4)에 그대로 쓸 수 있음.
 
@@ -448,11 +503,12 @@ def review_sheet(exam_id: str, sheet_id: str, corrections: dict[Any, Any] | None
         sheet_id: 답안지 ID (예: "S-1A2B3C4D")
         corrections: 문항별 확정 답 (예: {"7": 2, "9": [], "12": "1,4"}). None이면 답은 안 고침
         student_id: 확정 학번 (숫자만, 예: "2026123456"). None이면 학번은 안 고침
+        essay_scores: 서술형 점수 (예: {"1": 4.5, "2": ""}). 빈 값은 '점수 지우기'. None이면 안 고침
     반환:
         저장된 답안지 기록 dict (review 칸에 "updated_at" 수정 시각이 추가됨)
     예외:
         LookupError: 답안지가 없거나 판독 성공(status "read") 상태가 아님
-        ValueError: 학번에 숫자 외 문자가 있음
+        ValueError: 학번에 숫자 외 문자가 있음, 서술형 점수가 0~배점 밖이거나 채점하지 않는 서술형임
         ExamNotFoundError: 시험이 없음
     """
     rec = get_sheet(exam_id, sheet_id)
@@ -465,6 +521,21 @@ def review_sheet(exam_id: str, sheet_id: str, corrections: dict[Any, Any] | None
         if not re.fullmatch(r"\d+", student_id):
             raise ValueError("학번은 숫자만 입력")
         rec["review"]["student_id"] = student_id
+    if essay_scores:
+        key = get_answer_key(exam_id)
+        essay = rec["review"].setdefault("essay", {})
+        for n, v in essay_scores.items():
+            ni = int(n)
+            if v is None or v == "":
+                essay.pop(str(ni), None)
+                continue
+            pts = key.essay_points.get(ni, 0) if key else 0
+            if pts <= 0:
+                raise ValueError(f"서술형 {ni}번은 배점이 없어 채점하지 않는 문항입니다")
+            sc = float(v)
+            if not 0 <= sc <= pts:
+                raise ValueError(f"서술형 {ni}번 점수는 0~{pts:g}점 사이로 넣어 주세요")
+            essay[str(ni)] = sc
     rec["review"]["updated_at"] = datetime.now(KST).isoformat(timespec="seconds")
     return _save_sheet(rec)
 
@@ -489,25 +560,32 @@ def get_key_draft(exam_id: str) -> dict[str, Any]:
 
     반환:
         {"answers": {"1": [3], ...}, "points": {"5": 2.0}, "default_points": 1.0,
+         "essay_points": {"1": 5.0}, "essay_answers": {"1": "..."}, "num_essays": 5,
          "complete": False, "missing": [11, 12, ...], "num_questions": 20}
     """
-    exam, _ = _exam_and_layout(exam_id)
+    exam, layout = _exam_and_layout(exam_id)
     n = exam["num_questions"]
     key = get_answer_key(exam_id)
     if key is not None:
         d = key.to_dict()
-        base = {"answers": d["answers"], "points": d["points"], "default_points": d["default_points"]}
+        base = {"answers": d["answers"], "points": d["points"], "default_points": d["default_points"],
+                "essay_points": d["essay_points"], "essay_answers": d["essay_answers"]}
     elif os.path.exists(_draft_path(exam_id)):
         with open(_draft_path(exam_id), encoding="utf-8") as f:
             base = json.load(f)
     else:
         base = {"answers": {}, "points": {}, "default_points": 1.0}
+    base.setdefault("essay_points", {})
+    base.setdefault("essay_answers", {})
     missing = [q for q in range(1, n + 1) if not base["answers"].get(str(q))]
-    return base | {"complete": key is not None, "missing": missing, "num_questions": n}
+    return base | {"complete": key is not None, "missing": missing, "num_questions": n,
+                   "num_essays": _num_essays(layout)}
 
 
 def merge_answer_key(exam_id: str, answers: dict[Any, Any], points: dict[Any, Any] | None = None,
-                     default_points: float | None = None, allowed: set[int] | None = None) -> dict[str, Any]:
+                     default_points: float | None = None, allowed: set[int] | None = None,
+                     essay_points: dict[Any, Any] | None = None,
+                     essay_answers: dict[Any, Any] | None = None) -> dict[str, Any]:
     """일부 문항의 정답·배점만 저장 (보낸 문항만 바꾸고 나머지는 그대로).
 
     매개변수:
@@ -515,6 +593,8 @@ def merge_answer_key(exam_id: str, answers: dict[Any, Any], points: dict[Any, An
         points: {문항: 배점}. 빈 값(None, "")은 기본 배점으로 되돌리기
         default_points: 기본 배점. 모든 문항을 고칠 수 있는 사람(allowed=None)만 바꿀 수 있음
         allowed: 이 사람이 고칠 수 있는 문항 번호 집합. None이면 모든 문항 (소유자·관리자)
+        essay_points / essay_answers: 서술형 배점·모범답안 {서술형 번호: 값}. 빈 값은 지우기.
+                     모든 문항을 고칠 수 있는 사람(allowed=None)만 바꿀 수 있음
     반환:
         get_key_draft() 와 같은 형식 (complete=True 면 정답표가 완성돼 저장됨)
     예외:
@@ -524,6 +604,9 @@ def merge_answer_key(exam_id: str, answers: dict[Any, Any], points: dict[Any, An
     exam, _ = _exam_and_layout(exam_id)
     n, c = exam["num_questions"], exam["num_choices"]
     cur = get_key_draft(exam_id)
+    ne = cur["num_essays"]
+    e_pts = dict(cur["essay_points"])
+    e_ans = dict(cur["essay_answers"])
     complete = cur["complete"]
     ans = dict(cur["answers"])
     pts = dict(cur["points"])
@@ -562,11 +645,35 @@ def merge_answer_key(exam_id: str, answers: dict[Any, Any], points: dict[Any, An
             raise PermissionError("기본 배점은 시험 소유자만 바꿀 수 있습니다")
         dflt = float(default_points)
 
+    def check_e(no: Any) -> int:
+        ni = int(no)
+        if not 1 <= ni <= ne:
+            raise AnswerKeyError(f"서술형 {ni}번은 서술형 범위(1~{ne}) 밖입니다")
+        if allowed is not None:
+            raise PermissionError("서술형 배점·모범답안은 시험 소유자만 바꿀 수 있습니다")
+        return ni
+
+    for no, v in (essay_points or {}).items():
+        ni = check_e(no)
+        if v is None or v == "" or float(v) == 0:
+            e_pts.pop(str(ni), None)
+        elif float(v) < 0:
+            raise AnswerKeyError(f"서술형 {ni}번 배점이 음수입니다")
+        else:
+            e_pts[str(ni)] = float(v)
+    for no, v in (essay_answers or {}).items():
+        ni = check_e(no)
+        if v is None or not str(v).strip():
+            e_ans.pop(str(ni), None)
+        else:
+            e_ans[str(ni)] = str(v).strip()
+
     if all(ans.get(str(q)) for q in range(1, n + 1)):
-        set_answer_key(exam_id, ans, pts, dflt)             # 다 찼으면 진짜 정답표로 저장 (검사 포함)
+        set_answer_key(exam_id, ans, pts, dflt, e_pts, e_ans)   # 다 찼으면 진짜 정답표로 저장 (검사 포함)
     else:
         with open(_draft_path(exam_id), "w", encoding="utf-8") as f:
-            json.dump({"answers": ans, "points": pts, "default_points": dflt}, f, ensure_ascii=False, indent=1)
+            json.dump({"answers": ans, "points": pts, "default_points": dflt,
+                       "essay_points": e_pts, "essay_answers": e_ans}, f, ensure_ascii=False, indent=1)
     return get_key_draft(exam_id)
 
 
@@ -639,7 +746,8 @@ def grade_sheets(exam_id: str, key: AnswerKey | None = None) -> list[dict[str, A
         else:
             # 저장된 검수 수정값의 문항 번호("7")를 채점 함수가 쓰는 정수(7)로 바꿈
             corr = {int(q): v for q, v in rec["review"]["corrections"].items()}
-            g = flow.step_grade(rec["read"], key, corr, rec["review"].get("student_id"))   # P4
+            essay = {int(n): float(v) for n, v in (rec["review"].get("essay") or {}).items()}   # 서술형 점수
+            g = flow.step_grade(rec["read"], key, corr, rec["review"].get("student_id"), essay)   # P4
             g["read"] = rec["read"]
             g["source"] = rec["source"]
         g["sheet_id"] = rec["sheet_id"]

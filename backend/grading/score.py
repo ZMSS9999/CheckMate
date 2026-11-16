@@ -22,8 +22,13 @@
     blank    무응답        : 0점
     pending  검수 대기     : 판독 보류(애매한 칸) → 점수에 넣지 않음
 
+[서술형]
+  서술형은 사진에서 자동으로 읽지 않음. 검수 화면에서 선생님이 답 칸 사진을 보고 점수를 넣음
+  (essay_scores={서술형 번호: 점수}). 배점이 0보다 큰 서술형만 채점 대상이고,
+  점수를 아직 안 넣은 서술형은 '채점 대기'(pending)로 남아 답안지가 '검수 대기'가 됨.
+
 [답안지 상태]
-    확정       : 검수 대기 문항이 없고 학번도 정상으로 읽힘
+    확정       : 검수 대기 문항이 없고, 서술형 점수를 다 넣었고, 학번도 정상으로 읽힘
     검수 대기  : 검수 대기 문항이 있거나 학번이 불완전 → confirmed_score는 '현재까지 확정된 점수'
     재촬영 필요: 정렬 실패 등으로 판독 자체를 못 함 (P1 정렬 단계 실패, retake_record()로 기록)
 
@@ -89,7 +94,8 @@ def grade_question(answer: list[int] | None, key_answers: list[int]) -> str:
 
 def grade_sheet(read: dict[str, Any], key: AnswerKey,
                 corrections: dict[int, list[int]] | None = None,
-                student_id_correction: str | None = None) -> dict[str, Any]:
+                student_id_correction: str | None = None,
+                essay_scores: dict[int, float] | None = None) -> dict[str, Any]:
     """read_sheet() 결과 한 장 채점.
     문항 수가 정답표와 다르면 ValueError (다른 양식 답안지에 정답표를 잘못 적용한 경우).
 
@@ -104,6 +110,8 @@ def grade_sheet(read: dict[str, Any], key: AnswerKey,
         key: 정답표 (AnswerKey)
         corrections: 검수에서 고친 답 {문항 번호: 선지 목록} (예: {7: [2], 12: []}, 없으면 None)
         student_id_correction: 검수에서 고친 학번 (예: "20261234", 없으면 None)
+        essay_scores: 검수에서 넣은 서술형 점수 {서술형 번호: 점수} (예: {1: 4.5}, 없으면 None)
+                      배점보다 크면 배점으로, 0보다 작으면 0으로 맞춤
     반환:
         grade dict (P5 엑셀의 입력). 키 설명은 아래 return 부분 주석 참고
     예외:
@@ -137,16 +145,33 @@ def grade_sheet(read: dict[str, Any], key: AnswerKey,
             "source": source,                                 # "auto" 자동 판독 / "review" 검수 수정
         })
 
+    # 서술형: 배점이 있는 문항만. 점수를 넣었으면 그 점수, 안 넣었으면 채점 대기
+    essay_scores = essay_scores or {}
+    essay_items: list[dict[str, Any]] = []
+    for n in key.graded_essays:
+        pts = key.essay_points[n]
+        sc = essay_scores.get(n)
+        essay_items.append({
+            "no": n,                                                        # 서술형 번호
+            "points": pts,                                                  # 배점
+            "earned": None if sc is None else min(max(float(sc), 0.0), pts),   # 받은 점수 (안 넣었으면 None)
+            "result": "pending" if sc is None else "scored",                # scored 채점함 / pending 채점 대기
+        })
+
     sid = read["student_id"]
     student_id = student_id_correction or sid["text"]   # 최종 학번 (수정값 우선, 못 읽었으면 None)
     sid_ok = student_id is not None                     # 학번 확정 여부
     pending = [it["q"] for it in items if it["result"] == "pending"]                   # 검수 대기 문항 번호 목록
-    confirmed_score = sum(it["earned"] for it in items)                                # 확정된 문항에서 얻은 점수 합
-    pending_points = sum(it["points"] for it in items if it["result"] == "pending")    # 검수 대기 문항 배점 합
+    pending_essays = [it["no"] for it in essay_items if it["result"] == "pending"]     # 점수 안 넣은 서술형 번호
+    mcq_score = sum(it["earned"] for it in items)                                      # 객관식 점수
+    essay_score = sum(it["earned"] for it in essay_items if it["earned"] is not None)  # 서술형 점수 (넣은 것만)
+    confirmed_score = mcq_score + essay_score                                          # 지금까지 확정된 점수 합
+    pending_points = (sum(it["points"] for it in items if it["result"] == "pending")   # 아직 안 정해진 배점 합
+                      + sum(it["points"] for it in essay_items if it["result"] == "pending"))
     # 결과 종류별 문항 수 (예: {"correct": 15, "wrong": 3, "multi": 1, "blank": 0, "pending": 1})
     counts = {r: sum(it["result"] == r for it in items)
               for r in ("correct", "wrong", "multi", "blank", "pending")}
-    status = STATUS_CONFIRMED if not pending and sid_ok else STATUS_PENDING
+    status = STATUS_CONFIRMED if not pending and not pending_essays and sid_ok else STATUS_PENDING
     # grade dict: P5 엑셀과 웹 화면이 이 키만 보고 동작함 (retake_record()도 같은 키)
     return {
         "student_id": student_id,                                           # 최종 학번 (없으면 None)
@@ -158,8 +183,13 @@ def grade_sheet(read: dict[str, Any], key: AnswerKey,
         "max_possible": confirmed_score + pending_points,                   # 검수 결과에 따라 가능한 최고점
         "total_points": key.total_points,                                   # 만점
         "pending_questions": pending,                                       # 검수 대기 문항 번호 목록
-        "counts": counts,                                                   # 결과 종류별 문항 수
-        "items": items,                                                     # 문항별 채점 기록 목록
+        "counts": counts,                                                   # 결과 종류별 문항 수 (객관식)
+        "items": items,                                                     # 문항별 채점 기록 목록 (객관식)
+        "mcq_score": mcq_score,                                             # 객관식 점수
+        "essay_score": essay_score,                                         # 서술형 점수 (넣은 것만 합)
+        "essay_total": key.essay_total,                                     # 서술형 만점
+        "pending_essays": pending_essays,                                   # 점수 안 넣은 서술형 번호 목록
+        "essay_items": essay_items,                                         # 서술형별 채점 기록 목록
     }
 
 
@@ -178,4 +208,5 @@ def retake_record(source: str, error: str) -> dict[str, Any]:
     """
     return {"source": source, "status": STATUS_RETAKE, "error": error, "student_id": None,
             "student_id_raw": None, "student_id_ok": False, "score": None, "confirmed_score": 0.0,
-            "max_possible": None, "total_points": None, "pending_questions": [], "counts": {}, "items": []}
+            "max_possible": None, "total_points": None, "pending_questions": [], "counts": {}, "items": [],
+            "mcq_score": None, "essay_score": None, "essay_total": None, "pending_essays": [], "essay_items": []}

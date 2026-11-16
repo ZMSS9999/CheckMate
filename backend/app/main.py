@@ -53,6 +53,7 @@ http://localhost:8000/docs 에서는 아래 API를 직접 눌러 시험해 볼 �
     POST   /api/exams/{exam_id}/answer-key/upload      정답표 파일 올리기 (.xlsx / .json)
     GET    /api/exams/{exam_id}/answer-key             저장된 정답표
     POST   /api/exams/{exam_id}/sheets                 답안지 사진 올리기 (여러 장) → 정렬·판독 (P1~P3)
+    POST   /api/sheets/auto                            시험을 안 고르고 사진 올리기 → QR로 시험 찾아 저장 (못 읽으면 no_qr)
     GET    /api/exams/{exam_id}/sheets                 판독한 답안지 목록 (요약)
     GET    /api/exams/{exam_id}/sheets/{sheet_id}      답안지 한 장의 판독 결과 전체
     GET    /api/exams/{exam_id}/sheets/{sheet_id}/image  정렬 이미지 (JPEG, 검수 화면의 사진)
@@ -91,6 +92,8 @@ from . import grading_service as gs
 
 # 서버 앱 객체. uvicorn이 "app.main:app" 으로 이 변수를 찾아 실행함 (title·version은 /docs 화면 제목)
 app = FastAPI(title="CheckMate API", version="0.2")
+# 지난번에 다 못 지운 시험 폴더 정리 (OneDrive 등이 파일을 잡고 있어 남은 것)
+service.purge_trash()
 
 # React 개발 서버(Vite 5173, CRA 3000)에서 호출할 수 있도록 허용
 # (CORS: 다른 주소·포트의 웹 페이지가 이 서버를 부를 수 있게 허락하는 브라우저 보안 규칙)
@@ -149,9 +152,9 @@ class AnswerSheetRequest(BaseModel):
                              description="선지 수 (2~5)")
     # 용지 방향: "portrait"(세로, 기본값) 또는 "landscape"(가로). 다른 값이면 422
     orientation: Literal["portrait", "landscape"] = "portrait"
-    # 시험명 (선택, 30자 이하, QR에만 저장). QR 구분 문자 '|' 는 못 쓰게 정규식으로 막음
+    # 시험명 (선택, 30자 이하, 답안지에 인쇄 안 함. exam.json에 저장). QR 구분 문자 '|' 는 못 쓰게 정규식으로 막음
     exam_name: str = Field("", max_length=service.MAX_EXAM_NAME, pattern=r"^[^|]*$")
-    # 과목명 (선택, 20자 이하, QR에만 저장). '|' 금지는 시험명과 같은 이유
+    # 과목명 (선택, 20자 이하, 답안지에 인쇄 안 함. exam.json에 저장). '|' 금지는 시험명과 같은 이유
     subject: str = Field("", max_length=service.MAX_SUBJECT, pattern=r"^[^|]*$")
 
 
@@ -350,6 +353,10 @@ class AnswerKeyRequest(BaseModel):
     points: dict[str, float] = Field(default_factory=dict, description="문항별 배점 (없으면 default_points)")
     # 기본 배점 (0 이상, 기본 1점)
     default_points: float = Field(1, ge=0)
+    # 서술형 배점 {서술형 번호: 점수}. 0 또는 없음 = 채점 안 함
+    essay_points: dict[str, float] = Field(default_factory=dict, description='서술형 배점. 예: {"1": 5}')
+    # 서술형 모범답안 {서술형 번호: 글}. 검수 화면에 보여 줌
+    essay_answers: dict[str, str] = Field(default_factory=dict, description="서술형 모범답안")
 
 
 class ReviewRequest(BaseModel):
@@ -365,6 +372,8 @@ class ReviewRequest(BaseModel):
     corrections: dict[str, Any] = Field(default_factory=dict, description='검수로 확정한 답. 예: {"7": 2, "9": []}')
     # 확정 학번 (숫자 문자열). None 이면 학번은 고치지 않음
     student_id: str | None = None
+    # 서술형 점수 {서술형 번호: 점수}. 빈 값("")은 점수 지우기
+    essay: dict[str, Any] = Field(default_factory=dict, description='서술형 점수. 예: {"1": 4.5}')
 
 
 def _require_exam(exam_id: str, user: dict[str, Any], need: int = access.VIEW) -> dict[str, Any]:
@@ -410,6 +419,8 @@ def _sheet_summary(rec: dict[str, Any]) -> dict[str, Any]:
         정렬 실패 등은 앞의 6개 항목만 있음 (status "align_failed", error 에 사유)
     """
     out = {k: rec.get(k) for k in ("sheet_id", "source", "status", "error", "processed_at", "notes")}
+    # QR 확인 여부: 정렬까지 됐는데 QR을 못 읽은 장은 False (웹 목록에 'QR 미확인' 표시). 정렬 실패면 None
+    out["qr_ok"] = (rec.get("align") or {}).get("qr_ok")
     if rec["status"] == "read":
         read = rec["read"]
         # P3 판독 결과에서 학번(완성본·읽은 그대로), 상태별 문항 수, 검수 필요 여부, 문항별 답만 꺼냄
@@ -456,7 +467,8 @@ def put_answer_key(exam_id: str, req: AnswerKeyRequest, user: dict = Depends(cur
     """
     _require_exam(exam_id, user, access.OWNER)
     try:
-        key = gs.set_answer_key(exam_id, req.answers, req.points, req.default_points)
+        key = gs.set_answer_key(exam_id, req.answers, req.points, req.default_points,
+                                req.essay_points, req.essay_answers)
     except AnswerKeyError as e:
         raise HTTPException(422, str(e))
     return key.to_dict()
@@ -561,6 +573,43 @@ async def upload_sheets(exam_id: str, files: list[UploadFile] = File(...), user:
     return {"exam_id": exam_id, "sheets": results}
 
 
+@app.post("/api/sheets/auto", status_code=201)
+async def upload_sheets_auto(files: list[UploadFile] = File(...), user: dict = Depends(current_user)):
+    """시험을 고르지 않고 사진 여러 장 올리기 → 장마다 QR의 시험 ID로 시험을 찾아 그 시험에 저장 (시험 자동 분류).
+
+    (POST /api/sheets/auto) 여러 시험의 답안지가 섞여 있어도 한 번에 올릴 수 있음.
+    장마다 결과 status: upload_sheets 의 값들 + 아래 두 가지 (둘 다 저장 안 함)
+        "no_qr"        : QR을 못 읽음 → 웹에서 시험을 골라 /api/exams/{exam_id}/sheets 로 다시 올림
+        "unknown_exam" : QR의 시험이 없거나 사진 올리기(검수) 권한이 없음
+    정렬 실패(align_failed)도 시험을 알 수 없어서 저장하지 않음.
+
+    반환:
+        {"sheets": [장별 요약 dict (+ exam_id, exam_name, subject), ...]}
+    """
+    if user.get("role") == "admin":
+        raise HTTPException(403, "관리자 계정은 사진을 올릴 수 없습니다")
+    cfg = admin_service.read_config()
+    can = lambda eid: access.level_for(user, eid) >= access.REVIEW   # noqa: E731
+    results = []
+    for uf in files:
+        data = await uf.read()
+        if len(data) > MAX_UPLOAD_BYTES:
+            results.append({"source": uf.filename, "status": "rejected", "error": "파일이 20MB를 넘습니다"})
+            continue
+        try:
+            img = gs.decode_image(data)
+        except ValueError as e:
+            results.append({"source": uf.filename, "status": "rejected", "error": str(e)})
+            continue
+        rec = gs.route_photo(img, uf.filename or "", can, cfg=cfg)
+        out = _sheet_summary(rec) if "sheet_id" in rec else dict(rec)
+        exam = service.get_exam(rec["exam_id"]) if rec.get("exam_id") and rec["status"] != gs.UNKNOWN_EXAM else None
+        out.update(exam_id=rec.get("exam_id"), exam_name=(exam or {}).get("exam_name"),
+                   subject=(exam or {}).get("subject"))
+        results.append(out)
+    return {"sheets": results}
+
+
 class AnswerKeyPartRequest(BaseModel):
     """PATCH /api/exams/{exam_id}/answer-key/draft 요청 본문 (일부 문항만 저장).
 
@@ -569,6 +618,8 @@ class AnswerKeyPartRequest(BaseModel):
     answers: dict[str, Any] = Field(default_factory=dict)
     points: dict[str, Any] = Field(default_factory=dict)
     default_points: float | None = Field(None, ge=0)
+    essay_points: dict[str, Any] = Field(default_factory=dict)    # 서술형 배점 (소유자·관리자만)
+    essay_answers: dict[str, Any] = Field(default_factory=dict)   # 서술형 모범답안 (소유자·관리자만)
 
 
 @app.get("/api/exams/{exam_id}/answer-key/draft")
@@ -593,7 +644,8 @@ def patch_answer_key_draft(exam_id: str, req: AnswerKeyPartRequest, user: dict =
         raise HTTPException(403, "이 시험에서 정답을 입력할 수 있는 문항이 없습니다")
     try:
         return gs.merge_answer_key(exam_id, req.answers, req.points, req.default_points,
-                                   None if scope["all"] else set(scope["key"]))
+                                   None if scope["all"] else set(scope["key"]),
+                                   req.essay_points, req.essay_answers)
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except (AnswerKeyError, ValueError) as e:
@@ -628,7 +680,11 @@ def delete_exam(exam_id: str, user: dict = Depends(current_user)):
         HTTP 404: 시험이 없거나 ID 형식이 틀림
     """
     _require_exam(exam_id, user, access.OWNER)
-    if not service.delete_exam(exam_id):
+    try:
+        ok = service.delete_exam(exam_id)
+    except service.ExamDeleteError:
+        raise HTTPException(409, "파일이 사용 중이라 지우지 못했습니다. 잠시 후 다시 시도하세요")
+    if not ok:
         raise HTTPException(404, "시험을 찾을 수 없습니다")
 
 
@@ -716,14 +772,17 @@ def review_sheet(exam_id: str, sheet_id: str, req: ReviewRequest, user: dict = D
         HTTP 422: 학번에 숫자 외 문자가 있는 등 입력값 오류(ValueError)
     """
     exam = _require_exam(exam_id, user)
-    scope = set(access.my_scope(user, exam_id, exam["num_questions"])["review"])
+    my = access.my_scope(user, exam_id, exam["num_questions"])
+    scope = set(my["review"])
+    if req.essay and not my.get("essay"):
+        raise HTTPException(403, "서술형 점수는 시험 관리자나 전체 문항 검수 담당만 넣을 수 있습니다")
     if not scope:
         raise HTTPException(403, "이 시험에서 검수할 수 있는 문항이 없습니다 (내 권한: 보기만)")
     outside = sorted(int(q) for q in req.corrections if int(q) not in scope)
     if outside:
         raise HTTPException(403, f"내가 맡은 문항이 아니라서 고칠 수 없습니다: {', '.join(map(str, outside))}번")
     try:
-        rec = gs.review_sheet(exam_id, sheet_id, req.corrections, req.student_id)
+        rec = gs.review_sheet(exam_id, sheet_id, req.corrections, req.student_id, req.essay)
     except LookupError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:

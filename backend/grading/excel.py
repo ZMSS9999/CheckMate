@@ -6,7 +6,9 @@
 
 [시트 구성]
   1. 학생별 점수표 : 학번, 상태(확정 / 검수 대기 / 재촬영 필요), 확정 점수, 최고 가능 점수, 정답·오답 수
+                     (서술형을 채점하는 시험이면 객관식 점수·서술형 점수 열 추가)
   2. 문항별 결과   : 학생 × 문항 표. 칸에 읽은 답, 색으로 정답/오답/무응답/복수/검수 대기 구분
+                     (서술형은 '서술 1' 같은 열에 넣은 점수, 안 넣었으면 '?')
   3. 문항별 정답률 : 문항별 정답률과 선지별 선택 수 (확정된 응답만 집계)
   4. 검수 대기     : 사람이 확인해야 할 문항·학번 목록과 칸별 채움 비율
   5. 정답표        : 채점에 쓴 정답과 배점
@@ -176,8 +178,11 @@ def write_results_xlsx(path: str, records: list[dict[str, Any]], key: AnswerKey,
     ws["A2"] = (f"생성 {datetime.now():%Y-%m-%d %H:%M} · 답안지 {len(records)}장 "
                 f"(확정 {n_conf}, 검수 대기 {n_pend}, 재촬영 필요 {n_ret}) · 만점 {key.total_points:g}점")
     # 4행: 머리글, 5행부터 답안지 한 장당 한 줄
+    essays = key.graded_essays        # 채점하는 서술형 번호 (없으면 [])
     cols = ["번호", "학번", "상태", "확정 점수", "현재 확정분", "최고 가능 점수", "만점",
             "정답", "오답", "복수 응답", "무응답", "검수 대기 문항", "파일", "비고"]
+    if essays:
+        cols += ["객관식 점수", "서술형 점수", "서술형 채점 대기"]
     _header(ws, 4, cols)
     for i, r in enumerate(records, 1):
         c = r.get("counts", {})       # 결과 종류별 문항 수 (재촬영 필요면 빈 dict)
@@ -189,12 +194,15 @@ def write_results_xlsx(path: str, records: list[dict[str, Any]], key: AnswerKey,
                r.get("max_possible"), r.get("total_points"),
                c.get("correct"), c.get("wrong"), c.get("multi"), c.get("blank"),
                ", ".join(map(str, r.get("pending_questions", []))), r.get("source", ""), note]
+        if essays:
+            row += [r.get("mcq_score"), r.get("essay_score"),
+                    ", ".join(f"서술 {n}" for n in r.get("pending_essays", []))]
         ws.append(row)
         rr = ws.max_row               # 방금 추가한 행 번호
         # 테두리는 전체 열, 가운데 정렬은 1~12열(번호 ~ 검수 대기 문항)만. 상태 칸은 상태별 색
         for col in range(1, len(cols) + 1):
             ws.cell(rr, col).border = BOX
-            if col <= 12:
+            if col <= 12 or col >= 15:
                 ws.cell(rr, col).alignment = CENTER
         ws.cell(rr, 3).fill = STATUS_FILL.get(r["status"], FILL["blank"])
     # 맨 아래 요약 줄: 확정된 점수만으로 평균·최고·최저 (확정 답안지가 없으면 "-")
@@ -205,16 +213,18 @@ def write_results_xlsx(path: str, records: list[dict[str, Any]], key: AnswerKey,
                    "최고", max(conf_scores) if conf_scores else "-", "최저", min(conf_scores) if conf_scores else "-"])
         for col in range(2, 8):
             ws.cell(ws.max_row, col).font = Font(bold=True)
-    _widths(ws, {1: 6, 2: 14, 3: 12, 4: 10, 5: 11, 6: 13, 7: 7, 8: 6, 9: 6, 10: 9, 11: 7, 12: 16, 13: 28, 14: 34})
+    _widths(ws, {1: 6, 2: 14, 3: 12, 4: 10, 5: 11, 6: 13, 7: 7, 8: 6, 9: 6, 10: 9, 11: 7, 12: 16, 13: 28, 14: 34,
+                 15: 11, 16: 11, 17: 16})
     ws.freeze_panes = "C5"            # 머리글(1~4행)과 번호·학번 열(A~B) 고정
 
     # ---------- 2. 문항별 결과 ----------
     ws2 = wb.create_sheet("문항별 결과")
     nq = key.num_questions            # 문항 수
     # 1행: 머리글 (학번 | 상태 | 점수 | 1번 | 2번 | ...), 2행: 정답 행 (연노랑)
-    _header(ws2, 1, ["학번", "상태", "점수"] + [f"{q}번" for q in range(1, nq + 1)])
-    ws2.append(["정답", "", key.total_points] + [_ans_text(key.answers[q]) for q in range(1, nq + 1)])
-    for col in range(1, nq + 4):
+    _header(ws2, 1, ["학번", "상태", "점수"] + [f"{q}번" for q in range(1, nq + 1)] + [f"서술 {n}" for n in essays])
+    ws2.append(["정답", "", key.total_points] + [_ans_text(key.answers[q]) for q in range(1, nq + 1)]
+               + [f"{key.essay_points[n]:g}점" for n in essays])
+    for col in range(1, nq + 4 + len(essays)):
         ws2.cell(2, col).fill = FILL["key"]
         ws2.cell(2, col).font = Font(bold=True)
         ws2.cell(2, col).alignment = CENTER
@@ -237,6 +247,11 @@ def write_results_xlsx(path: str, records: list[dict[str, Any]], key: AnswerKey,
             cell.border = BOX
             if it["source"] == "review":
                 cell.font = Font(bold=True, underline="single")
+        for j, ei in enumerate(r.get("essay_items", [])):
+            cell = ws2.cell(rr, 4 + nq + j, ei["earned"] if ei["earned"] is not None else "?")
+            cell.fill = FILL["pending"] if ei["earned"] is None else PatternFill()
+            cell.alignment = CENTER
+            cell.border = BOX
     # 표 아래 한 줄 띄고 범례 (결과별 색 견본 + 칸 표기 설명)
     lr = ws2.max_row + 2              # 범례 시작 행
     ws2.cell(lr, 1, "범례").font = Font(bold=True)
@@ -245,8 +260,9 @@ def write_results_xlsx(path: str, records: list[dict[str, Any]], key: AnswerKey,
         cell.fill = FILL[k]
         cell.alignment = CENTER
     ws2.cell(lr + len(RESULT_KO) + 1, 1,
-             "칸 표기: 숫자=읽은 답, '-'=무응답, '?'=판정 보류, '2,5'=복수 응답, 굵은 밑줄=검수에서 수정")
-    _widths(ws2, {1: 14, 2: 11, 3: 9, **{c: 5.5 for c in range(4, nq + 4)}})
+             "칸 표기: 숫자=읽은 답, '-'=무응답, '?'=판정 보류, '2,5'=복수 응답, 굵은 밑줄=검수에서 수정"
+             + (". 서술 열: 넣은 점수, '?'=채점 대기" if essays else ""))
+    _widths(ws2, {1: 14, 2: 11, 3: 9, **{c: 5.5 for c in range(4, nq + 4)}, **{c: 7 for c in range(nq + 4, nq + 4 + len(essays))}})
     ws2.freeze_panes = "D3"           # 머리글·정답 행(1~2행)과 학번·상태·점수 열(A~C) 고정
 
     # ---------- 3. 문항별 정답률 ----------
@@ -302,6 +318,9 @@ def write_results_xlsx(path: str, records: list[dict[str, Any]], key: AnswerKey,
                 reason = "애매한 칸 (판정 보류)" if it["result"] == "pending" else "복수 응답 (0점 처리, 확인 권장)"
                 ws4.append([r.get("source"), r.get("student_id") or r.get("student_id_raw"),
                             f"{it['q']}번", reason, _ans_text(it["answer"]), fills])
+        for n in r.get("pending_essays", []):
+            ws4.append([r.get("source"), r.get("student_id") or r.get("student_id_raw"),
+                        f"서술 {n}", "서술형 점수 입력 전", "", ""])
     for row in ws4.iter_rows(min_row=2):
         for cell in row:
             cell.border = BOX
@@ -317,8 +336,13 @@ def write_results_xlsx(path: str, records: list[dict[str, Any]], key: AnswerKey,
         for col in range(1, 4):
             ws5.cell(ws5.max_row, col).alignment = CENTER
             ws5.cell(ws5.max_row, col).border = BOX
+    for n in essays:
+        ws5.append([f"서술 {n}", key.essay_answers.get(n, ""), key.essay_points[n]])
+        for col in range(1, 4):
+            ws5.cell(ws5.max_row, col).alignment = CENTER if col != 2 else Alignment(vertical="center", wrap_text=True)
+            ws5.cell(ws5.max_row, col).border = BOX
     ws5.append(["합계", "", key.total_points])
-    _widths(ws5, {1: 8, 2: 8, 3: 8})
+    _widths(ws5, {1: 8, 2: 40 if essays else 8, 3: 8})
 
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     wb.save(path)

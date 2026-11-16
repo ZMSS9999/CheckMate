@@ -87,6 +87,7 @@ ALIGN_FAILED = "align_failed"    # P1 실패 → 재촬영 필요
 WRONG_EXAM = "wrong_exam"        # P2 실패 → 이 시험 결과에 넣지 않음
 TOO_BRIGHT = "too_bright"        # P3에서 과노출·부분 반사 판정 → 재촬영 필요 (판독 결과는 참고용으로 남김)
 TOO_BLURRY = "too_blurry"        # P1 뒤 선명도(blur_var) < ReadConfig.blur_min → 재촬영 필요 (판독 안 함)
+QR_MISSING_NOTE = "QR을 읽지 못해 선택한 시험의 양식으로 판독함"   # P2 메모 (웹 목록의 'QR 미확인' 표시 기준)
 BLURRY_MSG = "사진이 흐림 (초점이 안 맞았거나 흔들림). 초점을 맞추고 흔들리지 않게 다시 찍어 주세요"
 
 
@@ -122,6 +123,7 @@ class SheetResult:
               reproj_err_px : 정렬 오차 (px, 소수 2자리)
               blur_var      : 흐림 지표 (소수 1자리, 낮을수록 흐림)
               qr_ok         : QR을 읽고 해석까지 성공했는지
+              qr_method     : QR을 읽은 방법 ("warped"/"hires"/"binary"/"photo", 못 읽으면 "")
               marker_set    : 정렬에 쓴 마커 세트 ("team" 팀 양식 / "print" 실제 인쇄본)
         """
         a = self.align
@@ -129,7 +131,7 @@ class SheetResult:
             return None
         return {"orientation": a.orientation, "markers": a.found_ids,
                 "reproj_err_px": round(a.reproj_err_px, 2), "blur_var": round(a.blur_var, 1),
-                "qr_ok": a.qr_info is not None, "marker_set": a.marker_set}
+                "qr_ok": a.qr_info is not None, "qr_method": a.qr_method, "marker_set": a.marker_set}
 
 
 # ---------------- 단계 함수 (각각 단독으로도 호출 가능) ----------------
@@ -151,7 +153,9 @@ def step_align(photo_bgr: np.ndarray) -> AlignResult:
 def step_check_exam(res: AlignResult, exam: dict[str, Any], layout: dict[str, Any]) -> list[str]:
     """P2 이 사진이 지금 채점하는 시험의 답안지가 맞는지 확인.
     - QR의 시험 ID가 다르면 → WrongSheetError (다른 반/다른 시험 답안지가 섞인 경우)
-    - QR을 못 읽으면 → 경고만 남기고 선택한 시험 양식으로 계속 진행
+    - QR의 시험 ID는 같은데 양식 ID·버전이 다르면 → WrongSheetError (양식 파일이 바뀐 경우, 좌표가 안 맞음)
+    - QR을 못 읽으면 → 경고(QR_MISSING_NOTE)만 남기고 선택한 시험 양식으로 계속 진행
+      (웹에서는 시험을 고른 뒤 올리므로 '사람이 고른 시험'을 믿음. 검수 화면에 'QR 미확인'으로 표시됨)
     - 마커로 알아낸 방향(세로/가로)이 양식과 다르면 → WrongSheetError
 
     매개변수:
@@ -166,10 +170,16 @@ def step_check_exam(res: AlignResult, exam: dict[str, Any], layout: dict[str, An
     """
     notes = list(res.notes)   # 원본(res.notes)을 바꾸지 않게 복사
     if res.qr_info:
-        if res.qr_info["exam_id"] != exam["exam_id"]:
-            raise WrongSheetError(f"다른 시험의 답안지입니다 (QR 시험 ID {res.qr_info['exam_id']})")
+        q = res.qr_info
+        if q["exam_id"] != exam["exam_id"]:
+            name = " ".join(x for x in (q.get("subject"), q.get("exam_name")) if x)   # QR에 적힌 과목명·시험명
+            raise WrongSheetError(f"다른 시험의 답안지입니다 (QR 시험 ID {q['exam_id']}{', ' + name if name else ''})")
+        # 시험 ID가 같으면 양식도 같아야 정상. 다르면 양식 파일이 바뀐 것 → 좌표가 안 맞으니 판독하지 않음
+        if (q["template_id"], q["template_version"]) != (layout["template_id"], layout["template_version"]):
+            raise WrongSheetError(f"답안지 양식({q['template_id']} v{q['template_version']})이 시험 양식"
+                                  f"({layout['template_id']} v{layout['template_version']})과 다릅니다")
     else:
-        notes.append("QR을 읽지 못해 선택한 시험의 양식으로 판독함")
+        notes.append(QR_MISSING_NOTE)
     if res.orientation != layout["orientation"]:
         raise WrongSheetError("답안지 방향(세로/가로)이 시험 양식과 다릅니다")
     return notes
@@ -191,14 +201,16 @@ def step_read(warped: np.ndarray, layout: dict[str, Any], cfg: ReadConfig | None
 
 def step_grade(read: dict[str, Any], key: AnswerKey,
                corrections: dict[int, list[int]] | None = None,
-               student_id: str | None = None) -> dict[str, Any]:
-    """P4 판독 결과 + 정답표 → 점수. corrections/student_id는 검수에서 고친 값.
+               student_id: str | None = None,
+               essay_scores: dict[int, float] | None = None) -> dict[str, Any]:
+    """P4 판독 결과 + 정답표 → 점수. corrections/student_id/essay_scores는 검수에서 고친·넣은 값.
 
     매개변수:
         read: P3 결과 dict
         key: 정답표 (AnswerKey. 문항 수·문항별 정답·배점)
         corrections: 사람이 검수에서 고친 답 {문항 번호: 답 목록}. 예: {7: [2]}. 없으면 None
         student_id: 사람이 검수에서 고친 학번 문자열. 예: "2026103456". 없으면 None
+        essay_scores: 사람이 검수에서 넣은 서술형 점수 {서술형 번호: 점수}. 예: {1: 4.5}. 없으면 None
     반환:
         grade dict (grading/score.py의 grade_sheet() 반환값)
         주요 키: student_id, student_id_raw, student_id_ok, status("확정"/"검수 대기"), score,
@@ -206,7 +218,7 @@ def step_grade(read: dict[str, Any], key: AnswerKey,
     예외:
         ValueError: 답안지 문항 수와 정답표 문항 수가 다를 때 (grade_sheet에서 발생)
     """
-    return grade_sheet(read, key, corrections, student_id)
+    return grade_sheet(read, key, corrections, student_id, essay_scores)
 
 
 def step_export(grades: list[dict[str, Any]], key: AnswerKey, exam: dict[str, Any] | None,
@@ -227,7 +239,7 @@ def step_export(grades: list[dict[str, Any]], key: AnswerKey, exam: dict[str, An
 # ---------------- 단계 잇기 ----------------
 def run_photo(photo_bgr: np.ndarray, exam: dict[str, Any], layout: dict[str, Any],
               key: AnswerKey | None = None, cfg: ReadConfig | None = None,
-              source: str = "") -> SheetResult:
+              source: str = "", aligned: AlignResult | None = None) -> SheetResult:
     """사진 1장에 P1→P2→P3(→P4)를 차례로 적용. 앞 단계 출력이 그대로 다음 단계 입력이 됨.
     실패해도 예외를 밖으로 던지지 않고 SheetResult.status에 기록 → 여러 장 처리 중 한 장 때문에 멈추지 않음.
 
@@ -241,13 +253,14 @@ def run_photo(photo_bgr: np.ndarray, exam: dict[str, Any], layout: dict[str, Any
         key: 정답표. None이면 P4 채점을 건너뛰고 판독(P3)까지만 함
         cfg: 판독 기준값 (None이면 기본값)
         source: 사진 출처 이름 (예: 파일명 "student01.jpg"). 결과와 엑셀에 표시됨
+        aligned: 이미 P1 정렬을 끝낸 결과 (QR로 시험을 먼저 찾을 때 정렬을 두 번 하지 않으려고). None이면 여기서 정렬
     반환:
         SheetResult. status가 "read"면 align·read(·grade)가 채워져 있음
         P4를 했으면 grade dict에 "source"(사진 출처)와 "read"(P3 결과 전체)를 덧붙여 둠
     """
     r = SheetResult(source=source)
     try:
-        r.align = step_align(photo_bgr)                         # P1
+        r.align = aligned or step_align(photo_bgr)              # P1
     except AlignError as e:
         r.status, r.error = ALIGN_FAILED, str(e)
         return r

@@ -63,6 +63,13 @@ MARKER_IDS = {"TL": 0, "TR": 1, "BR": 3, "BL": 2}   # 위치 → 마커 ID (세�
 CANONICAL_DPI = 200       # 정렬 후 기준 이미지 해상도(dpi = 1인치당 픽셀 수). A4 세로 = 1654 x 2339 px
 
 QR_PREFIX = "CM1"         # QR 내용 맨 앞 표식 (CheckMate 형식 버전 1). 우리 QR인지 구분용
+# QR에 과목명·시험명까지 넣을지. False면 "CM1|시험ID|양식ID|양식버전" 4칸만 넣음 (2026-11-13 가상 촬영 테스트 결과로 바꿈)
+#   한글은 글자당 3바이트라 이름이 길면 QR이 촘촘해짐 (107바이트 → 한 변 45칸, 모듈 0.53mm)
+#   가상 촬영(hard) 테스트: 33·60바이트는 정렬된 사진 모두 읽힘, 107바이트는 약 절반만 읽힘
+#   과목명·시험명은 서버 exam.json에 있으므로 판독·채점에는 QR의 시험 ID만 있으면 됨
+QR_WITH_NAMES = False
+# 예전(6칸) QR 형식 설명 글. layout.geometry_hash 계산에 고정값으로 씀 (저장된 양식 파일과 해시를 맞추기 위함)
+QR_FORMAT_V1 = f"{QR_PREFIX}|<exam_id>|<template_id>|<template_version>|<subject>|<exam_name>"
 QR_SIZE_MM = 26.0         # QR 한 변 길이(mm). 둘레 여백(quiet zone) 포함. 팀 양식의 QR 네모 칸 안 가운데에 둠
 
 # 방향별 고정값
@@ -212,6 +219,7 @@ def frame_dict(orientation: str) -> dict:
         },
         "qr": {
             "bbox_mm": list(cfg["qr_bbox_mm"]),
-            "format": f"{QR_PREFIX}|<exam_id>|<template_id>|<template_version>|<subject>|<exam_name>",
+            "format": (f"{QR_PREFIX}|<exam_id>|<template_id>|<template_version>|<subject>|<exam_name>" if QR_WITH_NAMES
+                       else f"{QR_PREFIX}|<exam_id>|<template_id>|<template_version>"),
         },
     }

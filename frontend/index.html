@@ -16,6 +16,7 @@
     #/exams     시험 목록 (처음 화면)          #/new      새 시험 만들기 (답안지 PDF)
     #/overview  시험 현황 (다음 할 일 안내)    #/key      정답 입력
     #/upload    사진 올리기                    #/review   검수
+    #/sort      사진 올리기 (QR로 시험 찾기, 시험 안 고름)
     #/results   결과·엑셀
     #/account   내 계정 (비밀번호 바꾸기)
     관리자만:   #/admin/exams 지난 시험 관리 · #/admin/users 계정 관리 · #/admin/templates 답안지 양식 · #/admin/settings 시스템 설정
@@ -277,11 +278,49 @@
   .setrow .def { color: var(--muted); font-size: 12px; }
   .setrow input[type=number] { width: 110px; }
   .setrow.changed b::after { content: "바꿈"; background: var(--warn); color: #fff; font-weight: 700; font-size: 12px; padding: 1px 8px; border-radius: 10px; margin-left: 6px; }
+  /* 시스템 설정: 판독 기준값. 항목마다 기준값만큼 칠한 칸을 그려서 값을 움직이면 칸이 같이 바뀜 */
+  .setgrid { max-width: 820px; }
+  .setgrid .setrow { grid-template-columns: 236px 80px 1fr; border-left: 4px solid transparent; padding-left: 10px; }
+  .setgrid .setrow b { white-space: nowrap; }
+  .setgrid .setrow.focus { border-left-color: var(--accent); }
+  .setctl { display: flex; align-items: center; gap: 10px; }
+  .setctl input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  .setctl input[type=number] { width: 84px; }
+  .setbub svg { display: block; width: 72px; height: 72px; }
+  /* 사진 밝기 기준: 재촬영 기준·밝은 사진 기준을 손잡이 두 개짜리 막대 하나로 (재촬영 | 검수 | 정상) */
+  .setbub.two { display: flex; gap: 2px; } .setbub.two svg { width: 38px; height: 38px; }
+  .setgrid .setrow.dualrow { grid-template-columns: 236px 80px 1fr; }
+  .dual { position: relative; flex: 1; min-width: 0; height: 44px; }
+  .dual .trk { position: absolute; left: 9px; right: 9px; top: 12px; height: 4px; background: #c9ced8; border-radius: 2px; }
+  .dual .mid { position: absolute; top: 12px; height: 4px; background: var(--accent); }
+  .dual input[type=range] { position: absolute; left: 0; width: 100%; top: 5px; margin: 0; height: 18px; background: none;
+    -webkit-appearance: none; appearance: none; pointer-events: none; }
+  .dual input[type=range]::-webkit-slider-runnable-track { background: none; height: 18px; }
+  .dual input[type=range]::-moz-range-track { background: none; }
+  .dual input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--accent); cursor: pointer; }
+  .dual input[type=range]::-moz-range-thumb { pointer-events: auto; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--accent); cursor: pointer; }
+  .dual .seg { position: absolute; top: 24px; transform: translateX(-50%); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .nums2 { display: flex; gap: 6px; } .nums2 input[type=number] { width: 72px; }
+  @media (max-width: 720px) { .setgrid .setrow { grid-template-columns: 80px 1fr; } .setgrid .setrow > :first-child { grid-column: 1 / -1; } }
   .app[hidden] { display: none; }
   .secrow { padding: 12px 0; border-bottom: 1px solid var(--line); }
   .secrow input[type=number] { padding: 7px 8px; }
   .chk { display: inline-flex; gap: 4px; align-items: center; margin-right: 10px; cursor: pointer; }
   .keyrow.locked { background: var(--soft); }
+  .essayrow { display: grid; grid-template-columns: 64px 110px 1fr; gap: 12px; align-items: start; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+  .essayrow .qn { font-weight: 700; padding-top: 9px; }
+  .essayrow input[type=number] { width: 72px; }
+  textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; font-family: inherit; background: #fff; resize: vertical; min-height: 40px; }
+  .ecard { padding: 12px; border-radius: 8px; border: 1px solid var(--line); margin-bottom: 10px; }
+  .ecard.flag { border: 2px solid var(--warn); }
+  .ecard .ehead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ecard .ehead .qn { font-weight: 700; }
+  .ecard .ehead input[type=number] { width: 80px; margin-left: auto; }
+  .ecard .model { margin-top: 8px; font-size: 13px; white-space: pre-wrap; border-left: 3px solid var(--accent); padding: 4px 10px; }
+  .ecrop { margin-top: 8px; width: 100%; border: 1px solid var(--line); border-radius: 6px; background-repeat: no-repeat; background-color: #fff; }
+  @media (max-width: 720px) { .essayrow { grid-template-columns: 56px 1fr; } .essayrow textarea { grid-column: 1 / -1; } }
   .keyrow .sec { font-size: 12px; font-weight: 700; border: 1px solid var(--ink); border-radius: 10px; padding: 0 7px; }
 
   @media (max-width: 960px) {
@@ -448,6 +487,7 @@ function renderSide() {
     : `<div class="brand"><div class="logo">✓</div>CheckMate</div>
     <nav class="nav">
       ${link("#/exams", `<span class="num">≡</span>내 시험 목록`)}
+      ${link("#/sort", `<span class="num">▤</span>사진 올리기 (QR)`)}
       ${canCreate() ? link("#/new-blank", `<span class="num">+</span>새 시험 만들기`) : ""}
     </nav>`;
   if (app.exam && !isAdmin()) {          // 관리자 화면에는 '지금 시험'을 보여 주지 않음
@@ -482,7 +522,7 @@ function setTop(title, sub = "", actions = "") {
 
 const PAGES = {
   "#/exams": pageExams, "#/new": pageNew, "#/new-blank": pageNew, "#/overview": pageOverview,
-  "#/key": pageKey, "#/upload": pageUpload, "#/review": pageReview, "#/results": pageResults,
+  "#/key": pageKey, "#/upload": pageUpload, "#/sort": pageSort, "#/review": pageReview, "#/results": pageResults,
   "#/account": pageAccount,
   "#/admin/exams": pageAdminExams, "#/admin/users": pageAdminUsers,
   "#/admin/templates": pageAdminTemplates, "#/admin/settings": pageAdminSettings,
@@ -526,7 +566,8 @@ window.addEventListener("hashchange", route);
 
 async function pageExams() {
   setTop("내 시험 목록", "",
-    canCreate() ? `<a class="btn primary" href="#/new-blank">+ 새 시험 만들기</a>` : "");
+    `<a class="btn" href="#/sort">사진 올리기 (QR로 시험 찾기)</a>` +
+    (canCreate() ? ` <a class="btn primary" href="#/new-blank">+ 새 시험 만들기</a>` : ""));
   // 1순위: 서버의 전체 시험 목록 (GET /api/exams). 아직 없으면 이 브라우저가 기억한 시험만 하나씩 읽어 옴
   let exams, fromServer = true;
   try { exams = await api("/api/exams"); if (!Array.isArray(exams)) throw new Error(); }
@@ -656,7 +697,7 @@ async function pageNew() {
     const ch = []; for (let k = o.num_choices.min; k <= o.num_choices.max; k++) ch.push({ value: k, label: `${k}지선다` });
     seg($("choices"), ch, "num_choices");
     seg($("ori"), o.orientations, "orientation");
-    $("summary").textContent = `${oriText(st.orientation)} A4 · 객관식 ${st.num_questions}문항(${st.num_choices}지선다) · 주관식 ${o.short_answers}문항 · 학번 10자리`;
+    $("summary").textContent = `${oriText(st.orientation)} A4 · 객관식 ${st.num_questions}문항(${st.num_choices}지선다) · 서술형 ${o.short_answers}문항 · 학번 10자리`;
   }
   $("q_range").oninput = (e) => setQ(e.target.value);
   $("q_num").onchange = (e) => setQ(e.target.value);
@@ -675,7 +716,8 @@ async function pageNew() {
       app.exam = rec; app.key = null; app.sheets = [];
       remember(rec.exam_id);
       toast("답안지를 만들었습니다");
-      location.hash = "#/new";
+      // 이미 #/new면 hashchange가 안 일어나 화면이 "만드는 중…"에 멈춤 → 직접 다시 그림
+      if (location.hash === "#/new") route(); else location.hash = "#/new";
     } catch (ex) {
       err.style.display = ""; err.textContent = ex.message;
       $("submit").disabled = false; $("submit").textContent = "답안지 PDF 만들기";
@@ -779,6 +821,11 @@ async function pageKey() {
     defPts = src.default_points ?? 1;
     for (const [q, v] of Object.entries(src.points || {})) if (v !== defPts) pts[q] = v;
   }
+  // 서술형: 답안지에 인쇄된 칸 수만큼. ePts[n] = 배점 (0·빈칸 = 채점 안 함), eAns[n] = 모범답안
+  const NE = draft?.num_essays ?? (lay?.short_answers?.items || []).length;
+  const ePts = {}, eAns = {};
+  for (const [n, v] of Object.entries(src?.essay_points || {})) if (v > 0) ePts[n] = v;
+  for (const [n, v] of Object.entries(src?.essay_answers || {})) eAns[n] = v;
 
   $("view").innerHTML = `
     <div class="card">
@@ -793,17 +840,33 @@ async function pageKey() {
       ${!app.key && draft && Object.keys(draft.answers || {}).length ? `<div class="msg info" style="margin-top:12px">빈 문항 ${draft.missing.length}개</div>` : ""}
       <input type="file" id="keyFile" accept=".xlsx,.json" hidden>
       <div class="keygrid" id="keygrid"></div>
+      ${NE ? `<div style="margin-top:26px">
+      <div class="row" style="margin-bottom:6px">
+        <h2 style="margin:0">서술형</h2>
+        <span class="pill blue" id="essayPts"></span>
+      </div>
+      <div class="essayrow" style="padding-top:0;border-bottom:1px solid var(--ink)"><b>문항</b><b>배점</b><b>모범답안</b></div>
+      <div id="essays">${Array.from({ length: NE }, (_, i) => i + 1).map(n => `
+        <div class="essayrow">
+          <span class="qn">서술 ${n}</span>
+          <span class="row small"><input type="number" class="epts" min="0" step="0.5" data-n="${n}" value="${ePts[n] ?? ""}" placeholder="0" aria-label="서술 ${n} 배점" ${scope.all ? "" : "disabled"}>점</span>
+          <textarea class="eans" rows="2" data-n="${n}" aria-label="서술 ${n} 모범답안" ${scope.all ? "" : "disabled"}>${esc(eAns[n] || "")}</textarea>
+        </div>`).join("")}</div>
+      </div>` : ""}
       <div class="savebar">
         <div class="msg err" id="keyErr" style="display:none;margin:0"></div>
         <button class="btn primary big" id="saveKey" style="margin-left:auto">정답표 저장</button>
       </div>
-    </div>`;
+    </div>
+`;
 
   // 총점(만점) = 문항별 배점 합. 배점 칸이 비어 있으면 기본 배점
   function drawTotal() {
     const d = Number($("defPts").value || 1);
     let t = 0; for (let q = 1; q <= N; q++) t += pts[q] ?? d;
-    $("totalPts").textContent = `총점 ${fmtNum(t)}점`;
+    const et = Object.values(ePts).reduce((a, b) => a + b, 0);
+    $("totalPts").textContent = et ? `총점 ${fmtNum(t + et)}점 (객관식 ${fmtNum(t)} · 서술형 ${fmtNum(et)})` : `총점 ${fmtNum(t)}점`;
+    if ($("essayPts")) $("essayPts").textContent = `서술형 ${fmtNum(et)}점`;
   }
   function draw() {
     let html = "";
@@ -840,6 +903,11 @@ async function pageKey() {
     drawTotal();
   };
   $("defPts").onchange = draw;
+  if ($("essays")) $("essays").oninput = (ev) => {
+    const p = ev.target.closest("input.epts"), t = ev.target.closest("textarea.eans");
+    if (p) { const v = Number(p.value); if (p.value === "" || !(v > 0)) delete ePts[p.dataset.n]; else ePts[p.dataset.n] = v; drawTotal(); }
+    if (t) eAns[t.dataset.n] = t.value;
+  };
 
   $("saveKey").onclick = async () => {
     const err = $("keyErr"); err.style.display = "none";
@@ -849,7 +917,11 @@ async function pageKey() {
     const answers = {}, points = {};
     for (const q of scope.key) { answers[q] = ans[q]; points[q] = pts[q] ?? ""; }
     const body = { answers, points };
-    if (scope.all) body.default_points = Number($("defPts").value || 1);
+    if (scope.all) {
+      body.default_points = Number($("defPts").value || 1);
+      body.essay_points = {}; body.essay_answers = {};
+      for (let n = 1; n <= NE; n++) { body.essay_points[n] = ePts[n] ?? ""; body.essay_answers[n] = (eAns[n] || "").trim(); }
+    }
     try {
       const r = await api(`/api/exams/${e.exam_id}/answer-key/draft`, jsonBody("PATCH", body));
       app.key = r.complete ? await api(`/api/exams/${e.exam_id}/answer-key`).catch(() => null) : null;
@@ -876,9 +948,11 @@ const STATUS_TEXT = {
   read: ["ok", "판독 완료"], align_failed: ["bad", "재촬영 필요"], too_bright: ["bad", "재촬영 필요 (밝음·반사)"], too_blurry: ["bad", "재촬영 필요 (흐림)"], wrong_exam: ["bad", "다른 시험지"], rejected: ["bad", "올릴 수 없는 파일"],
 };
 function sheetPill(s) {
-  if (needsReview(s)) return `<span class="pill warn">검수 필요</span>`;
+  // QR을 못 읽고 선택한 시험 양식으로 판독한 장 → 'QR 미확인'을 같이 표시 (다른 시험 답안지가 섞였는지 사람이 확인)
+  const qr = s.status === "read" && s.qr_ok === false ? ` <span class="pill gray">QR 미확인</span>` : "";
+  if (needsReview(s)) return `<span class="pill warn">검수 필요</span>${qr}`;
   const [cls, t] = STATUS_TEXT[s.status] || ["gray", s.status];
-  return `<span class="pill ${cls}">${t}</span>`;
+  return `<span class="pill ${cls}">${t}</span>${qr}`;
 }
 
 async function pageUpload() {
@@ -925,8 +999,9 @@ async function pageUpload() {
     await refreshExamState();
     const bad = results.filter(r => r.status !== "read");
     const rev = results.filter(r => r.status === "read" && r.needs_review).length;
+    const noQr = results.filter(r => r.status === "read" && r.qr_ok === false).length;
     box.innerHTML = `<div class="msg ${bad.length ? "err" : "ok"}" style="margin-top:14px">
-      ${results.length}장 중 ${results.length - bad.length}장 판독 완료${rev ? `, 그중 ${rev}장은 검수가 필요합니다` : ""}.
+      ${results.length}장 중 ${results.length - bad.length}장 판독 완료${rev ? `, 그중 ${rev}장은 검수가 필요합니다` : ""}.${noQr ? `<br>QR 미확인 ${noQr}장` : ""}
       ${bad.length ? `<br>판독하지 못한 사진: ${bad.map(b => `${esc(b.source)} (${esc(b.error || STATUS_TEXT[b.status]?.[1])})`).join(", ")}` : ""}</div>`;
     $("photos").value = "";
     drawSheetTable(); renderSide();
@@ -934,6 +1009,97 @@ async function pageUpload() {
       `<a class="btn primary" href="#/review">다음: 검수 →</a>`);
   }
 }
+// ---------------- 시험 자동 분류: 시험을 고르지 않고 사진 올리기 ----------------
+//   POST /api/sheets/auto → 장마다 QR의 시험 ID로 시험을 찾아 저장
+//   QR을 못 읽은 장(no_qr)은 저장되지 않음 → 줄마다 시험을 골라 POST /api/exams/{id}/sheets 로 다시 올림
+//   (고른 시험으로 판독되고 'QR 미확인'으로 표시됨). 파일은 브라우저 메모리에 들고 있다가 다시 보냄
+
+const SORT_TEXT = { no_qr: ["warn", "QR 못 읽음"], unknown_exam: ["bad", "시험 없음 · 권한 없음"] };
+
+async function pageSort() {
+  setTop("사진 올리기 (QR로 시험 찾기)", "");
+  let exams = [];
+  try { exams = (await api("/api/exams")).filter(e => can("review", e)); } catch (_) { exams = []; }
+  const rows = [];   // {file, res}
+  $("view").innerHTML = `
+    <div class="card">
+      <label class="drop" id="drop" for="photos"><b>여기로 사진을 끌어 놓거나 눌러서 고르세요</b></label>
+      <input type="file" id="photos" accept="image/*" multiple hidden>
+      <div id="upState"></div>
+    </div>
+    <div class="card" id="sortCard" style="display:none">
+      <div class="row" style="margin-bottom:12px"><h2 style="margin:0">올린 사진</h2><span class="pill gray" id="nSorted"></span></div>
+      <div id="sortTable"></div>
+    </div>`;
+  const drop = $("drop");
+  drop.ondragover = (ev) => { ev.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = (ev) => { ev.preventDefault(); drop.classList.remove("over"); upload([...ev.dataTransfer.files]); };
+  $("photos").onchange = (ev) => upload([...ev.target.files]);
+
+  const examLabel = (id) => {
+    const e = exams.find(x => x.exam_id === id);
+    return e ? `${esc(e.exam_name) || "(시험명 없음)"}${e.subject ? ` · ${esc(e.subject)}` : ""}` : esc(id || "-");
+  };
+  const options = exams.map(e => `<option value="${esc(e.exam_id)}">${esc(e.exam_name) || "(시험명 없음)"}${e.subject ? ` · ${esc(e.subject)}` : ""} (${esc(e.exam_id)})</option>`).join("");
+
+  async function upload(files) {
+    files = files.filter(f => f.type.startsWith("image/") || /\.(jpe?g|png|bmp|webp)$/i.test(f.name));
+    if (!files.length) return;
+    const box = $("upState");
+    box.innerHTML = `<div class="progress"><div id="bar"></div></div><div class="small" id="upText"></div>`;
+    for (let i = 0; i < files.length; i += 5) {
+      $("upText").textContent = `${i} / ${files.length}장 판독 중…`;
+      const part = files.slice(i, i + 5);
+      const fd = new FormData(); for (const f of part) fd.append("files", f);
+      try {
+        const res = (await api("/api/sheets/auto", { method: "POST", body: fd })).sheets;
+        res.forEach((r, k) => rows.push({ file: part[k], res: r }));
+      } catch (ex) { box.innerHTML = `<div class="msg err" style="margin-top:12px">${esc(ex.message)}</div>`; return; }
+      $("bar").style.width = `${Math.min(100, ((i + 5) / files.length) * 100)}%`;
+    }
+    const saved = rows.filter(r => r.res.sheet_id).length;
+    const noQr = rows.filter(r => r.res.status === "no_qr").length;
+    box.innerHTML = `<div class="msg ${noQr || saved < rows.length ? "err" : "ok"}" style="margin-top:14px">
+      ${rows.length}장 중 ${saved}장 저장${noQr ? `, QR 못 읽음 ${noQr}장` : ""}</div>`;
+    $("photos").value = "";
+    draw();
+  }
+
+  function draw() {
+    $("sortCard").style.display = "";
+    $("nSorted").textContent = `${rows.length}장`;
+    $("sortTable").innerHTML = `<div class="tablewrap"><table class="t">
+      <thead><tr><th>사진 파일</th><th>시험</th><th>학번</th><th>상태</th></tr></thead>
+      <tbody>${rows.map((r, i) => {
+        const s = r.res;
+        const pick = s.status === "no_qr" && !s.sheet_id
+          ? `<div class="row" style="gap:6px"><select data-pick="${i}" style="max-width:320px"><option value="">시험 선택</option>${options}</select>
+             <button class="btn" data-send="${i}">이 시험으로 올리기</button></div>`
+          : examLabel(s.exam_id);
+        const pill = SORT_TEXT[s.status] && !s.sheet_id
+          ? `<span class="pill ${SORT_TEXT[s.status][0]}">${SORT_TEXT[s.status][1]}</span>` : sheetPill(s);
+        return `<tr>
+          <td>${esc(s.source)}</td>
+          <td>${pick}</td>
+          <td class="mono">${esc(s.student_id || s.student_id_raw || "-")}</td>
+          <td>${pill}${s.error && !SORT_TEXT[s.status] ? `<div class="small">${esc(s.error)}</div>` : ""}</td>
+        </tr>`;
+      }).join("")}</tbody></table></div>`;
+    for (const b of document.querySelectorAll("button[data-send]")) b.onclick = async () => {
+      const i = +b.dataset.send, examId = document.querySelector(`select[data-pick="${i}"]`).value;
+      if (!examId) { toast("시험을 고르세요"); return; }
+      b.disabled = true;
+      const fd = new FormData(); fd.append("files", rows[i].file);
+      try {
+        const r = (await api(`/api/exams/${examId}/sheets`, { method: "POST", body: fd })).sheets[0];
+        rows[i].res = { ...r, exam_id: examId };
+      } catch (ex) { toast(ex.message); b.disabled = false; return; }
+      draw();
+    };
+  }
+}
+
 function drawSheetTable() {
   const list = [...(app.sheets || [])].reverse();   // 최근에 올린 것부터
   $("nSheets").textContent = `${list.length}장`;
@@ -1037,6 +1203,18 @@ async function pageReview() {
       const px = cw >= 1 ? 0 : (x / (1 - cw)) * 100, py = ch >= 1 ? 0 : (y / (1 - ch)) * 100;
       return `<div style="width:100%;max-width:340px;aspect-ratio:${ratio.toFixed(4)};border:${sidRead.needs_review ? "3px solid var(--warn)" : "1px solid var(--line)"};border-radius:6px;background:#fff url('${imgUrl}') no-repeat;background-size:${(100 / cw).toFixed(2)}% ${(100 / ch).toFixed(2)}%;background-position:${px.toFixed(3)}% ${py.toFixed(3)}%"></div>`;
     };
+    // 서술형: 정답표에서 배점이 있는 문항만 채점. eCur[n] = 지금 화면의 점수 (빈칸 = 아직 안 넣음)
+    const eKey = app.key || {}, eSaved = (rec.review && rec.review.essay) || {};
+    const essays = Object.entries(eKey.essay_points || {}).map(([n, p]) => ({ n: Number(n), pts: p }))
+      .filter(x => x.pts > 0 && x.n <= (eKey.num_essays || 0)).sort((a, b) => a.n - b.n);
+    const eCur = {}; for (const x of essays) eCur[x.n] = eSaved[x.n] != null ? String(eSaved[x.n]) : "";
+    const canEssay = !!myScope().essay;
+    // 사진 조각: 정렬 이미지를 배경으로 깔고 b 위치만 보여 줌 (가로 폭에 맞춰 늘어남)
+    const cropAt = (b) => {
+      const [x, y, cw, ch] = b, ratio = (cw * crops.aspect) / ch;
+      const px = cw >= 1 ? 0 : (x / (1 - cw)) * 100, py = ch >= 1 ? 0 : (y / (1 - ch)) * 100;
+      return `<div class="ecrop" style="aspect-ratio:${ratio.toFixed(4)};background-image:url('${imgUrl}');background-size:${(100 / cw).toFixed(2)}% ${(100 / ch).toFixed(2)}%;background-position:${px.toFixed(3)}% ${py.toFixed(3)}%"></div>`;
+    };
     const boxAt = (b, cls, attr = "") => b ? `<div class="hl ${cls}" ${attr} style="left:${b[0] * 100}%;top:${b[1] * 100}%;width:${b[2] * 100}%;height:${b[3] * 100}%"></div>` : "";
 
     // 왼쪽 = 사진 (화면을 내려도 따라옴), 오른쪽 = 검수
@@ -1049,6 +1227,8 @@ async function pageReview() {
           <div class="row" style="margin-bottom:14px">
             <h2 style="margin:0">${esc(rec.source)}</h2>
             ${flagged.length ? `<span class="pill warn">확인할 문항 ${flagged.length}개</span>` : `<span class="pill ok">모든 문항 판독됨</span>`}
+            ${essays.length ? `<span class="pill ${essays.some(x => eCur[x.n] === "") ? "warn" : "ok"}" id="essayLeft"></span>` : ""}
+            ${rec.align && rec.align.qr_ok === false ? `<span class="pill gray">QR 미확인</span>` : ""}
             ${rec.review && rec.review.updated_at ? `<span class="pill gray">검수함 ${fmtDate(rec.review.updated_at)}</span>` : ""}
           </div>
           <div class="field sid" data-sidrow="1">
@@ -1061,6 +1241,17 @@ async function pageReview() {
             <label class="small" style="margin-left:auto"><input type="checkbox" id="showAll" ${showAll ? "checked" : ""}> 모든 문항 보기</label>
           </div>
           <div id="qlist"></div>
+          ${essays.length ? `<h2 style="margin:22px 0 10px">서술형</h2><div id="elist">${essays.map(x => `
+            <div class="ecard" data-n="${x.n}">
+              <div class="ehead">
+                <span class="qn">서술 ${x.n}</span>
+                <span class="small">배점 ${fmtNum(x.pts)}점</span>
+                <input type="number" class="escore" min="0" max="${x.pts}" step="0.5" data-n="${x.n}" value="${esc(eCur[x.n])}" aria-label="서술 ${x.n} 점수" ${canEssay ? "" : "disabled"}>
+                <span class="small">점</span>
+              </div>
+              ${crops && crops.short && crops.short[x.n] ? cropAt(crops.short[x.n]) : ""}
+              ${eKey.essay_answers && eKey.essay_answers[x.n] ? `<div class="model"><b>모범답안</b> ${esc(eKey.essay_answers[x.n])}</div>` : ""}
+            </div>`).join("")}</div>` : ""}
           <div class="savebar">
             <div class="msg err" id="revErr" style="display:none;margin:0"></div>
             <button class="btn" id="skip" style="margin-left:auto">다음 답안지</button>
@@ -1113,6 +1304,8 @@ async function pageReview() {
       if (!crops) return;
       const qc = ev.target.closest(".qcard");
       if (qc) { pointAt(crops.mcq[qc.dataset.q]); return; }
+      const ec = ev.target.closest(".ecard");
+      if (ec && crops.short) pointAt(crops.short[ec.dataset.n]);
     };
     box.querySelector(".rv > .card:last-child").addEventListener("mouseover", hoverQ);
     box.querySelector(".rv > .card:last-child").addEventListener("focusin", hoverQ);
@@ -1134,6 +1327,20 @@ async function pageReview() {
       }).join("") || `<div class="empty small">확인할 문항이 없습니다</div>`;
     }
     drawQ();
+    // 서술형 점수: 안 넣은 문항은 주황 테두리, 머리 줄에 남은 개수
+    function drawEssay() {
+      if (!essays.length) return;
+      const left = essays.filter(x => eCur[x.n] === "").length;
+      for (const c of document.querySelectorAll("#elist .ecard")) c.classList.toggle("flag", eCur[c.dataset.n] === "");
+      const pl = $("essayLeft");
+      pl.className = `pill ${left ? "warn" : "ok"}`;
+      pl.textContent = left ? `서술형 채점 ${left}개 남음` : "서술형 채점 완료";
+    }
+    drawEssay();
+    if ($("elist")) $("elist").oninput = (ev) => {
+      const i = ev.target.closest("input.escore"); if (!i) return;
+      eCur[i.dataset.n] = i.value.trim(); drawEssay();
+    };
     $("showAll").onchange = (ev) => { showAll = ev.target.checked; drawQ(); };
     $("qlist").onclick = (ev) => {
       const nr = ev.target.closest(".nores");
@@ -1171,9 +1378,16 @@ async function pageReview() {
       if (!sidVal) { err.style.display = ""; err.textContent = "학번을 넣어 주세요."; return; }
       const body = { corrections };
       if (sidVal !== (sidRead.text || "")) body.student_id = sidVal;
+      if (canEssay && essays.length) {
+        const bad = essays.filter(x => eCur[x.n] !== "" && !(Number(eCur[x.n]) >= 0 && Number(eCur[x.n]) <= x.pts));
+        if (bad.length) { err.style.display = ""; err.textContent = `서술 ${bad[0].n} 점수는 0~${fmtNum(bad[0].pts)}점 사이로 넣어 주세요.`; return; }
+        body.essay = {};
+        for (const x of essays) if (eCur[x.n] !== "" || eSaved[x.n] != null) body.essay[x.n] = eCur[x.n] === "" ? "" : Number(eCur[x.n]);
+      }
       try {
         await api(`/api/exams/${e.exam_id}/sheets/${sid}/review`, jsonBody("PATCH", body));
-        app.reviewed.add(sid);
+        // 서술형 점수를 다 넣었을 때만 '검수 필요' 목록에서 뺌 (남았으면 다음에도 목록에 남음)
+        if (!(canEssay && essays.some(x => eCur[x.n] === ""))) app.reviewed.add(sid);
         const s = app.sheets.find(x => x.sheet_id === sid); if (s && body.student_id) s.student_id = body.student_id;
         toast("검수 내용을 저장했습니다");
         renderSide(); goNext();
@@ -1226,6 +1440,12 @@ async function pageResults() {
   const secHead = secs.map(s => `<th class="num">${esc(s.name)}<div class="small">${s.from}~${s.to}번</div></th>`).join("");
   const secCells = (r) => secs.map((_, i) => { const x = r.sections && r.sections[i];
     return `<td class="num">${x ? `${fmtNum(x.score)}<span> / ${fmtNum(x.total)}</span>${x.pending ? `<div class="small">검수 ${x.pending}</div>` : ""}` : "-"}</td>`; }).join("");
+  // 서술형을 채점하는 시험이면 객관식·서술형 점수 열을 따로 보여 줌
+  const essayTotal = res.find(r => r.essay_total)?.essay_total || 0;
+  const mcqTotal = total != null ? total - essayTotal : null;
+  const essayHead = essayTotal ? `<th class="num">객관식<div class="small">${fmtNum(mcqTotal)}점</div></th><th class="num">서술형<div class="small">${fmtNum(essayTotal)}점</div></th>` : "";
+  const essayCells = (r) => !essayTotal ? "" : !r.items?.length ? `<td class="num">-</td><td class="num">-</td>`
+    : `<td class="num">${fmtNum(r.mcq_score)}</td><td class="num">${fmtNum(r.essay_score)}${r.pending_essays?.length ? `<div class="small">채점 대기 ${r.pending_essays.length}</div>` : ""}</td>`;
 
   $("view").innerHTML = `
     <div class="stats">
@@ -1239,12 +1459,12 @@ async function pageResults() {
     <div class="card">
       <h2>학생별 점수</h2>
       <div class="tablewrap"><table class="t">
-        <thead><tr><th>학번</th><th>사진 파일</th><th>상태</th>${secHead}<th class="num">총점</th><th class="num">맞음</th><th class="num">틀림</th><th class="num">무응답</th><th class="num">복수 표시</th></tr></thead>
+        <thead><tr><th>학번</th><th>사진 파일</th><th>상태</th>${secHead}${essayHead}<th class="num">총점</th><th class="num">맞음</th><th class="num">틀림</th><th class="num">무응답</th><th class="num">복수 표시</th></tr></thead>
         <tbody>${sorted.map(r => `<tr>
           <td class="mono">${esc(r.student_id || "-")}</td>
           <td class="small">${esc(r.source)}</td>
           <td>${statusPill(r)}${r.status === "재촬영 필요" && r.error ? `<div class="small muted">${esc(r.error)}</div>` : ""}</td>
-          ${secCells(r)}
+          ${secCells(r)}${essayCells(r)}
           <td class="num"><b>${r.status === "확정" ? fmtNum(r.score) : r.status === "검수 대기" ? `${fmtNum(r.confirmed_score)}~${fmtNum(r.max_possible)}` : "-"}</b>${r.total_points != null ? `<span class="muted"> / ${fmtNum(r.total_points)}</span>` : ""}</td>
           <td class="num">${r.counts?.correct ?? "-"}</td><td class="num">${r.counts?.wrong ?? "-"}</td>
           <td class="num">${r.counts?.blank ?? "-"}</td><td class="num">${r.counts?.multi ?? "-"}</td>
@@ -1601,6 +1821,29 @@ async function pageAdminTemplates() {
 }
 
 // ---------------- 관리자: 시스템 설정 ----------------
+// 판독 기준값. 숫자 항목마다 칸 하나를 그려서, 값을 움직이면 칸이 그 기준값 그대로 바뀜
+//   잉크 농도(g) = (종이 밝기 - 픽셀 밝기) / 종이 밝기 (pipeline/read.py) → 농도 v인 칸의 밝기 = 255 × (1 - v)
+//   - 마킹 인정 농도·흐린 자국 농도 : 칸 안쪽을 농도 v로 칠함
+//   - 동그라미 표시 기준            : 칸 바깥 링(반지름 1.12~1.45배)의 v 비율만큼 진하게 그림
+//   - 재촬영·밝은 사진 기준(인쇄 대비): 인쇄된 테두리·숫자를 대비 v로 그림 (작을수록 밝은 사진)
+const BUB_KIND = { solid_min: "fill", light_min: "fill", ring_min: "ring", expo_retake: "print", expo_min: "print" };
+const INK = (v) => { const c = Math.round(255 * (1 - Math.max(0, Math.min(1, v)))); return `rgb(${c},${c},${c})`; };
+const PRINT_DEFAULT = 0.48;   // 보통 사진의 인쇄 대비 (합성 데이터 정면 원본)
+
+function bubbleSvg(kind, v) {
+  const R = 16, cx = 28, cy = 28;
+  const print = kind === "print" ? INK(v) : INK(PRINT_DEFAULT);
+  let extra = "";
+  if (kind === "fill") extra = `<circle cx="${cx}" cy="${cy}" r="${R - 1.5}" fill="${INK(v)}"/>`;
+  if (kind === "ring") {   // 링 중심선 위에 둘레의 v 비율만큼 호를 그림 (12시 방향부터 시계 방향)
+    const rr = R * 1.285, len = 2 * Math.PI * rr;
+    extra = `<circle cx="${cx}" cy="${cy}" r="${rr}" fill="none" stroke="#1b2233" stroke-width="${R * 0.33}"
+      stroke-dasharray="${(len * v).toFixed(2)} ${len.toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+  }
+  return `<svg viewBox="0 0 56 56" aria-hidden="true"><rect width="56" height="56" fill="#fff"/>
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${print}" stroke-width="1.6"/>
+    <text x="${cx}" y="${cy + 5}" text-anchor="middle" font-size="14" font-weight="600" fill="${print}">3</text>${extra}</svg>`;
+}
 
 async function pageAdminSettings() {
   setTop("시스템 설정");
@@ -1608,31 +1851,112 @@ async function pageAdminSettings() {
   const val = { ...s.read };
   const input = (k, sp) => sp.choices
     ? `<select data-k="${k}">${Object.entries(sp.choices).map(([v, l]) => `<option value="${v}" ${val[k] === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`
-    : `<input type="number" data-k="${k}" min="${sp.min}" max="${sp.max}" step="0.01" value="${val[k]}">`;
+    : `<div class="setctl"><input type="range" data-r="${k}" min="${sp.min}" max="${sp.max}" step="0.01" value="${val[k]}" list="dl_${k}">
+         <datalist id="dl_${k}"><option value="${s.defaults[k]}"></option></datalist>
+         <input type="number" data-k="${k}" min="${sp.min}" max="${sp.max}" step="0.01" value="${val[k]}"></div>`;
   const defText = (k, sp) => sp.choices ? sp.choices[s.defaults[k]] : s.defaults[k];
+  // 사진 밝기 기준 한 줄: 막대 범위 = 두 항목 범위를 합친 것. 손잡이는 서로 넘어가지 못함 (재촬영 ≤ 밝은 사진)
+  const SR = s.specs.expo_retake, SM = s.specs.expo_min;
+  const LO = Math.min(SR.min, SM.min), HI = Math.max(SR.max, SM.max);
+  const expoRow = () => `
+    <div class="setrow dualrow ${val.expo_retake !== s.defaults.expo_retake || val.expo_min !== s.defaults.expo_min ? "changed" : ""}" data-row="expo">
+      <div><b>사진 밝기 기준 (인쇄 대비)</b><div class="def">기본값 ${s.defaults.expo_retake} / ${s.defaults.expo_min}</div></div>
+      <div class="setbub two"><span id="bub_expo_retake"></span><span id="bub_expo_min"></span></div>
+      <div class="setctl">
+        <div class="dual"><div class="trk"></div><div class="mid" id="expoMid"></div>
+          <input type="range" data-r="expo_retake" min="${LO}" max="${HI}" step="0.01" value="${val.expo_retake}">
+          <input type="range" data-r="expo_min" min="${LO}" max="${HI}" step="0.01" value="${val.expo_min}">
+          <span class="seg" id="segRetake">재촬영</span><span class="seg" id="segReview">검수</span><span class="seg" id="segOk">정상</span></div>
+        <div class="nums2"><input type="number" data-k="expo_retake" min="${SR.min}" max="${SR.max}" step="0.01" value="${val.expo_retake}">
+          <input type="number" data-k="expo_min" min="${SM.min}" max="${SM.max}" step="0.01" value="${val.expo_min}"></div>
+      </div>
+    </div>`;
+  const rowOf = (k) => k === "expo_retake" || k === "expo_min" ? "expo" : k;
   $("view").innerHTML = `
     <div class="card">
       <h2>판독 기준값</h2>
       ${s.updated_at ? `<p class="desc">마지막 변경: ${fmtDate(s.updated_at)} (${esc(s.updated_by || "")})</p>` : ""}
-      ${Object.entries(s.specs).map(([k, sp]) => `
-        <div class="setrow ${val[k] !== s.defaults[k] ? "changed" : ""}" data-row="${k}">
-          <div><b>${esc(sp.label)}</b><div class="def">기본값 ${esc(defText(k, sp))}${sp.choices ? "" : ` · 범위 ${sp.min}~${sp.max}`}</div></div>
-          <div>${input(k, sp)}</div>
-        </div>`).join("")}
-      <div class="msg err" id="setErr" style="display:none;margin:16px 0 0"></div>
-      <div class="row" style="margin-top:18px">
-        <button class="btn primary" id="setSave">저장</button>
-        <button class="btn" id="setReset">모두 기본값으로</button>
+      <div class="setgrid">
+        ${Object.entries(s.specs).map(([k, sp]) => k === "expo_min" ? "" : k === "expo_retake" ? expoRow() : `
+          <div class="setrow ${val[k] !== s.defaults[k] ? "changed" : ""}" data-row="${k}">
+            <div><b>${esc(sp.label)}</b><div class="def">기본값 ${esc(defText(k, sp))}${sp.choices ? "" : ` · 범위 ${sp.min}~${sp.max}`}</div></div>
+            <div class="setbub" id="bub_${k}"></div>
+            <div>${input(k, sp)}</div>
+          </div>`).join("")}
+        <div class="msg err" id="setErr" style="display:none;margin:16px 0 0"></div>
+        <div class="row" style="margin-top:18px">
+          <button class="btn primary" id="setSave">저장</button>
+          <button class="btn" id="setReset">기본값 불러오기</button>
+        </div>
       </div>
     </div>`;
   const collect = () => Object.fromEntries([...document.querySelectorAll("[data-k]")].map(el =>
     [el.dataset.k, el.tagName === "SELECT" ? el.value : Number(el.value)]));
+  // 값이 바뀔 때마다: 바꿈 표시, 앞뒤가 맞지 않는 값 경고, 칸 다시 그리기
+  const refresh = () => {
+    const cur = collect();
+    for (const [k, v] of Object.entries(cur)) {
+      document.querySelector(`[data-row="${k}"]`)?.classList.toggle("changed", v !== s.defaults[k]);
+      if (BUB_KIND[k]) $("bub_" + k).innerHTML = bubbleSvg(BUB_KIND[k], v);
+    }
+    document.querySelector(`[data-row="expo"]`).classList.toggle("changed",
+      cur.expo_retake !== s.defaults.expo_retake || cur.expo_min !== s.defaults.expo_min);
+    // 막대 위 구간 표시: 손잡이 사이를 파랗게, 구간 이름은 각 구간 가운데에
+    const pct = (v) => `calc(9px + (100% - 18px) * ${(v - LO) / (HI - LO)})`;
+    const a = cur.expo_retake, b = cur.expo_min;
+    $("expoMid").style.left = pct(a); $("expoMid").style.width = `calc((100% - 18px) * ${(b - a) / (HI - LO)})`;
+    $("segRetake").style.left = pct((LO + a) / 2); $("segReview").style.left = pct((a + b) / 2); $("segOk").style.left = pct((b + HI) / 2);
+    $("segReview").style.display = b - a < 0.04 ? "none" : "";
+    // 밝은 사진 처리 = 재촬영 없이 검수 → 재촬영 손잡이는 쓰이지 않으므로 숨김
+    const noRetake = cur.expo_policy === "review";
+    for (const el of document.querySelectorAll('[data-r="expo_retake"], [data-k="expo_retake"], #bub_expo_retake, #segRetake, #expoMid'))
+      el.style.visibility = noRetake ? "hidden" : "";
+    if (noRetake) $("segReview").style.left = pct((LO + b) / 2), $("segReview").style.display = "";
+    $("setErr").style.display = "none";
+  };
+  // 사진 밝기 기준 손잡이·숫자: 각 항목 범위 안, 그리고 재촬영 ≤ 밝은 사진으로 맞춤
+  const clampExpo = (k, v) => {
+    const sp = s.specs[k], other = Number(document.querySelector(`input[data-k="${k === "expo_retake" ? "expo_min" : "expo_retake"}"]`).value);
+    v = Math.max(sp.min, Math.min(sp.max, v));
+    return k === "expo_retake" ? Math.min(v, other) : Math.max(v, other);
+  };
+  for (const el of document.querySelectorAll("[data-r]")) {
+    const num = document.querySelector(`input[data-k="${el.dataset.r}"]`);
+    const expo = rowOf(el.dataset.r) === "expo";
+    el.oninput = () => { if (expo) el.value = clampExpo(el.dataset.r, Number(el.value)); num.value = Number(el.value); refresh(); };
+    num.oninput = () => { if (num.value !== "") el.value = num.value; refresh(); };
+    if (expo) num.onchange = () => { const v = clampExpo(el.dataset.r, Number(num.value)); num.value = v; el.value = v; refresh(); };
+  }
+  // 손잡이 두 개가 겹쳐도 잡을 수 있게: 마우스에 더 가까운 손잡이를 위로 (같은 자리면 왼쪽은 재촬영, 오른쪽은 밝은 사진)
+  const dual = document.querySelector(".dual");
+  dual.onpointermove = dual.onpointerdown = (ev) => {
+    if (ev.buttons && ev.type === "pointermove") return;
+    const r = dual.getBoundingClientRect(), v = LO + (HI - LO) * (ev.clientX - r.left - 9) / (r.width - 18);
+    const ra = document.querySelector('[data-r="expo_retake"]'), rb = document.querySelector('[data-r="expo_min"]');
+    const da = Math.abs(v - ra.value), db = Math.abs(v - rb.value);
+    const top = da < db || (da === db && v < Number(ra.value)) ? ra : rb;
+    ra.style.zIndex = top === ra ? 2 : 1; rb.style.zIndex = top === rb ? 2 : 1;
+  };
+  for (const el of document.querySelectorAll("select[data-k]")) el.onchange = refresh;
+  for (const row of document.querySelectorAll(".setrow")) {
+    row.onfocusin = row.onmouseenter = () => {
+      document.querySelectorAll(".setrow.focus").forEach(x => x.classList.remove("focus")); row.classList.add("focus");
+    };
+  }
   const save = async (body) => {
     try { await api("/api/admin/settings", jsonBody("PUT", body)); toast("설정을 저장했습니다"); route(); }
     catch (ex) { $("setErr").style.display = ""; $("setErr").textContent = ex.message; }
   };
   $("setSave").onclick = () => save(collect());
-  $("setReset").onclick = () => { if (confirm("판독 기준값을 모두 기본값으로 되돌릴까요?")) save({ ...s.defaults }); };
+  // 기본값을 화면에만 불러옴 (저장을 눌러야 반영)
+  $("setReset").onclick = () => {
+    for (const [k, v] of Object.entries(s.defaults)) {
+      const el = document.querySelector(`[data-k="${k}"]`); if (el) el.value = v;
+      const r = document.querySelector(`[data-r="${k}"]`); if (r) r.value = v;
+    }
+    refresh();
+  };
+  refresh();
 }
 
 // ---------------- 시작 ----------------

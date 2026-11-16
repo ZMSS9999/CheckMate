@@ -149,6 +149,7 @@ class ReadConfig:
     ring_min: float = 0.15         # ring이 이 값 이상이면 ring (동그라미 표시)
     ink_dark: float = 0.45         # 진한 픽셀로 보는 잉크 농도 (cov, ring 계산용)
     print_dark: float = 0.15       # 인쇄 마스크로 보는 중앙값 잉크 농도
+    print_mask_max: float = 0.55   # 인쇄 마스크가 안쪽 원의 이 비율보다 넓으면 마킹이 섞인 것으로 보고 마스크 안 씀 (정상 인쇄 숫자 0.21~0.33)
     expo_min: float = 0.42         # 인쇄 잉크 대비 중앙값이 이보다 낮으면 과노출
     faint_policy: str = "accept"   # 흐린 마킹(light 1개) 처리: "accept"(답으로 인정) / "review"(검수)
     expo_retake: float = 0.24      # 인쇄 잉크 대비가 이보다 낮으면 재촬영 (임시값, 목표 재촬영률 5%로 실측에서 다시 정함)
@@ -419,21 +420,33 @@ def _crop_darkness(gray: np.ndarray, bubble: dict[str, Any], half: int, cfg: Rea
     return np.clip((paper - c) / paper, 0, 1)
 
 
-def _print_masks(crops: dict[Any, list[np.ndarray]], cfg: ReadConfig) -> dict[Any, np.ndarray]:
-    """같은 묶음(선지 번호 / 학번 값) 크롭들의 중앙값 → 인쇄 마스크 (True = 인쇄된 숫자·테두리).
+def _print_masks(crops: dict[Any, list[np.ndarray]], radius_px: dict[Any, float], cfg: ReadConfig) -> dict[Any, np.ndarray]:
+    """같은 묶음(선지 번호 / 학번 값) 크롭 중 밝은 쪽 절반의 중앙값 → 인쇄 마스크 (True = 인쇄된 숫자·테두리).
 
-    마킹된 칸은 묶음 안에서 소수라 중앙값에 안 남음. 가장자리 흐림을 덮으려고 1px 넓힘.
+    전체 중앙값을 쓰면 학번처럼 묶음이 작은 곳(자리 10개)에서 같은 숫자를 5번 이상 칠했을 때
+    (예: 2020000012의 0), 객관식을 한 번호로 절반 넘게 칠했을 때(예: 전부 3번) 마킹이 인쇄로 잡혀 지워짐 → 크롭 평균 잉크 농도가 낮은(덜 칠해진) 절반만 씀.
+    이러면 10자리 중 7자리까지 같은 숫자여도 버팀. 그래도 마스크가 안쪽 원의 print_mask_max보다
+    넓으면 (8자리 이상 같은 숫자 등) 마킹이 섞인 것으로 보고 마스크를 비움 (인쇄 숫자는 잉크 농도가 낮아 판정에 영향 적음).
+    가장자리 흐림을 덮으려고 1px 넓힘.
 
     매개변수:
         crops: {묶음 키: 잉크 농도 크롭 목록}
-        cfg: 판독 설정 (print_dark 사용)
+        radius_px: {묶음 키: 칸 반지름 px} (마스크 넓이 확인용)
+        cfg: 판독 설정 (print_dark, print_mask_max, inner_ratio 사용)
     반환:
         {묶음 키: bool 배열}
     """
     out = {}
     for k, cs in crops.items():
-        med = np.median(np.stack(cs), axis=0)
-        out[k] = cv2.dilate((med > cfg.print_dark).astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+        light = sorted(cs, key=lambda d: float(d.mean()))[:max(1, (len(cs) + 1) // 2)]   # 덜 칠해진 절반
+        med = np.median(np.stack(light), axis=0)
+        m = cv2.dilate((med > cfg.print_dark).astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+        s = m.shape[0]
+        yy, xx = np.mgrid[0:s, 0:s]
+        inner = np.hypot(xx - s / 2 + 0.5, yy - s / 2 + 0.5) <= cfg.inner_ratio * radius_px[k]
+        if inner.any() and m[inner].mean() > cfg.print_mask_max:   # 마킹이 섞인 마스크 → 안 씀
+            m = np.zeros_like(m)
+        out[k] = m
     return out
 
 
@@ -575,12 +588,15 @@ def read_sheet_darkness(warped_bgr: np.ndarray, layout: dict[str, Any], cfg: Rea
     mcq_d = [[_crop_darkness(gp, c, half, cfg) for c in q["choices"]] for q in layout["mcq"]["questions"]]
     sid_d = [_crop_darkness(gp, b, half, cfg) for b in sid["bubbles"]]
     groups: dict[Any, list[np.ndarray]] = {}
+    radii: dict[Any, float] = {}
     for q, ds in zip(layout["mcq"]["questions"], mcq_d):
         for c, d in zip(q["choices"], ds):
             groups.setdefault(("mcq", c["choice"]), []).append(d)
+            radii[("mcq", c["choice"])] = mm_to_px(c["radius_mm"], cfg.dpi)
     for b, d in zip(sid["bubbles"], sid_d):
         groups.setdefault(("sid", b["value"]), []).append(d)
-    pm = _print_masks(groups, cfg)
+        radii[("sid", b["value"])] = mm_to_px(b["radius_mm"], cfg.dpi)
+    pm = _print_masks(groups, radii, cfg)
 
     # 2. 과노출 확인: 인쇄 잉크 대비 = 크롭별 잉크 농도 97백분위의 중앙값
     all_d = [d for ds in mcq_d for d in ds] + sid_d

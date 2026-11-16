@@ -51,6 +51,8 @@ import os
 import re
 import secrets
 import shutil
+import stat
+import time
 from datetime import datetime, timezone, timedelta
 
 from sheetgen import SheetSpec, compute_layout, make_qr_payload, render_pdf
@@ -63,6 +65,8 @@ STORAGE_DIR = os.environ.get("CHECKMATE_STORAGE", os.path.join(BASE_DIR, "storag
 TEMPLATE_DIR = os.path.join(STORAGE_DIR, "templates")
 # 시험별 폴더(exam.json, PDF, 정답표, 판독 결과 등)를 모아 두는 폴더
 EXAM_DIR = os.path.join(STORAGE_DIR, "exams")
+# 지운 시험 폴더를 잠시 옮겨 두는 곳. 바로 못 지운 파일(OneDrive 동기화 등이 잡고 있는 파일)은 서버 시작 때 다시 지움
+TRASH_DIR = os.path.join(STORAGE_DIR, "_trash")
 # 한국 표준시(UTC+9). 시험 ID 날짜·생성 시각을 한국 시간으로 기록하기 위함
 KST = timezone(timedelta(hours=9))
 
@@ -178,7 +182,7 @@ def create_answer_sheet(num_questions: int, num_choices: int, orientation: str =
         {"exam_id": "EX-20261013-8C7353", "exam_name": "중간고사", "subject": "컴퓨터비전",
          "created_at": "2026-10-13T14:03:22+09:00", "template_id": "P20Q5C", "template_version": "1",
          "orientation": "portrait", "num_questions": 20, "num_choices": 5,
-         "qr_payload": "CM1|EX-20261013-8C7353|P20Q5C|1|컴퓨터비전|중간고사"}
+         "qr_payload": "CM1|EX-20261013-8C7353|P20Q5C|1"}
     예외:
         ValueError: 시험명·과목명이 너무 길거나 '|' 포함, 문항 수·선지 수·방향이 범위 밖
         LayoutOverflowError: 칸이 용지 안에 다 안 들어감 (sheetgen에서 발생)
@@ -196,7 +200,7 @@ def create_answer_sheet(num_questions: int, num_choices: int, orientation: str =
     save_template(layout)
 
     exam_id = new_exam_id()
-    # QR 내용: "CM1|시험ID|양식ID|양식버전|과목명|시험명" → P2에서 다른 시험 답안지인지 확인할 때 씀
+    # QR 내용: "CM1|시험ID|양식ID|양식버전" (과목명·시험명은 frame.QR_WITH_NAMES=True일 때만) → P2에서 다른 시험 답안지인지 확인할 때 씀
     qr = make_qr_payload(exam_id, layout["template_id"], layout["template_version"], subject, exam_name)
     exam_dir = os.path.join(EXAM_DIR, exam_id)
     os.makedirs(exam_dir, exist_ok=True)
@@ -260,23 +264,112 @@ def list_exams() -> list[dict]:
     return sorted(out, key=lambda r: r.get("created_at", ""), reverse=True)
 
 
+def _force_remove(func, p, _exc) -> None:
+    """shutil.rmtree가 못 지운 항목 처리: 읽기 전용 속성을 풀고 한 번 더 시도. 그래도 안 되면 넘어감 (바깥에서 재시도)."""
+    try:
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    except OSError:
+        pass
+
+
+def _rmtree_retry(path: str, tries: int = 5, wait: float = 0.3) -> bool:
+    """폴더를 지움. Windows·OneDrive에서 파일이 잠깐 잠겨 있으면 조금 기다렸다 다시 시도.
+
+    매개변수:
+        path: 지울 폴더
+        tries: 시도 횟수
+        wait: 첫 대기 시간(초). 시도마다 늘어남
+    반환:
+        다 지웠으면 True, 끝까지 남은 게 있으면 False
+    """
+    for i in range(tries):
+        if not os.path.exists(path):
+            return True
+        shutil.rmtree(path, onerror=_force_remove)
+        if not os.path.exists(path):
+            return True
+        time.sleep(wait * (i + 1))
+    return not os.path.exists(path)
+
+
+class ExamDeleteError(Exception):
+    """파일이 사용 중이라 시험 폴더를 옮기지도 지우지도 못함. 시험 기록(exam.json)은 남아 있어 다시 시도할 수 있음."""
+
+
 def delete_exam(exam_id: str) -> bool:
     """시험 하나를 통째로 지움 (시험 폴더: exam.json, 답안지 PDF, 정답표, 올린 답안지 판독 기록·사진, 결과 엑셀).
 
     되돌릴 수 없음 → 웹에서는 확인 창을 거친 뒤에만 부름. 양식 좌표(templates)는 다른 시험도 쓰므로 남겨 둠.
+    순서: 시험 폴더를 _trash로 한 번에 옮김(목록에서 바로 사라짐) → _trash 안에서 지움.
+    지우다 남은 파일은 서버 시작 때 purge_trash()가 다시 지움.
+    옮기기도 안 되면 exam.json만 남기고 나머지를 지운 뒤 마지막에 exam.json을 지움 → 반쯤 지워진 채 시험이 사라지는 일 없음.
 
     매개변수:
         exam_id: 시험 ID (예: "EX-20261013-8C7353")
     반환:
         지웠으면 True, ID 형식이 틀리거나 시험이 없으면 False
+    예외:
+        ExamDeleteError: 파일이 사용 중이라 지우지 못함 (시험은 그대로 남음)
     """
     if not EXAM_ID_RE.match(exam_id):          # 경로 조작 방지 (get_exam과 같은 검사)
         return False
     path = os.path.join(EXAM_DIR, exam_id)
-    if not os.path.isfile(os.path.join(path, "exam.json")):
+    meta = os.path.join(path, "exam.json")
+    if not os.path.isfile(meta):
         return False
-    shutil.rmtree(path)
+
+    # 1) _trash로 옮기기 (같은 드라이브 안 이름 바꾸기라 한 번에 됨)
+    os.makedirs(TRASH_DIR, exist_ok=True)
+    dst = os.path.join(TRASH_DIR, f"{exam_id}_{int(time.time() * 1000)}")
+    for i in range(5):
+        try:
+            os.replace(path, dst)
+            _rmtree_retry(dst)              # 남아도 괜찮음: 시험은 이미 목록에서 빠졌고 다음 시작 때 정리
+            return True
+        except OSError:
+            time.sleep(0.3 * (i + 1))
+
+    # 2) 옮기기 실패 → exam.json은 마지막에
+    for name in os.listdir(path):
+        if name == "exam.json":
+            continue
+        p = os.path.join(path, name)
+        if os.path.isdir(p):
+            _rmtree_retry(p)
+        else:
+            try:
+                os.chmod(p, stat.S_IWRITE)
+                os.remove(p)
+            except OSError:
+                pass
+    if any(n != "exam.json" for n in os.listdir(path)):
+        raise ExamDeleteError(exam_id)
+    try:
+        os.chmod(meta, stat.S_IWRITE)
+        os.remove(meta)
+    except OSError as e:
+        raise ExamDeleteError(exam_id) from e
+    _rmtree_retry(path)                     # 빈 폴더가 남아도 exam.json이 없으니 목록에는 안 나옴
     return True
+
+
+def purge_trash() -> None:
+    """서버 시작 때 정리: _trash에 남은 폴더와, exam.json 없이 남은 빈 시험 폴더(예전 삭제 오류의 흔적)를 지움.
+
+    매개변수:
+        없음
+    반환:
+        없음 (못 지운 건 다음 시작 때 다시 시도)
+    """
+    if os.path.isdir(TRASH_DIR):
+        for name in os.listdir(TRASH_DIR):
+            _rmtree_retry(os.path.join(TRASH_DIR, name), tries=2)
+    if os.path.isdir(EXAM_DIR):
+        for name in os.listdir(EXAM_DIR):
+            d = os.path.join(EXAM_DIR, name)
+            if EXAM_ID_RE.match(name) and os.path.isdir(d) and not os.path.exists(os.path.join(d, "exam.json")):
+                _rmtree_retry(d, tries=2)
 
 
 def exam_pdf_path(exam_id: str) -> str | None:

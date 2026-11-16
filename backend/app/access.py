@@ -167,19 +167,21 @@ def my_scope(user: dict[str, Any], exam_id: str, num_questions: int,
         문항 범위를 맡은 사람               → 둘 다 맡은 범위 문항만 (권한 단계와 상관없이)
         범위를 안 맡은 '검수 가능' 참여자   → 정답 입력 없음, 검수는 모든 문항
         범위를 안 맡은 '보기만' 참여자      → 둘 다 없음
+        서술형 점수 입력(essay)             → 소유자·관리자, 범위를 안 맡은 '검수 가능' 참여자
     반환:
-        {"key": [1, 2, ...], "review": [...], "sections": [내가 맡은 범위 이름, ...], "all": 모든 문항 가능 여부}
+        {"key": [1, 2, ...], "review": [...], "sections": [내가 맡은 범위 이름, ...], "all": 모든 문항 가능 여부,
+         "essay": 서술형 점수 입력 가능 여부}
     """
     acc = acc or get_access(exam_id)
     lv = level_for(user, exam_id, acc)
     every = list(range(1, num_questions + 1))
     if lv >= OWNER:
-        return {"key": every, "review": every, "sections": [], "all": True}
+        return {"key": every, "review": every, "sections": [], "all": True, "essay": True}
     mine = [s for s in acc.get("sections", []) if user["username"] in s.get("assignees", [])]
     if mine:
         qs = sorted({q for s in mine for q in range(s["from"], s["to"] + 1)})
-        return {"key": qs, "review": qs, "sections": [s["name"] for s in mine], "all": False}
-    return {"key": [], "review": every if lv >= REVIEW else [], "sections": [], "all": False}
+        return {"key": qs, "review": qs, "sections": [s["name"] for s in mine], "all": False, "essay": False}
+    return {"key": [], "review": every if lv >= REVIEW else [], "sections": [], "all": False, "essay": lv >= REVIEW}
 
 
 
