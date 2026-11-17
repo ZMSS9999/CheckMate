@@ -3,7 +3,9 @@
 
 [이 파일의 역할]
   layout.py가 계산한 칸 좌표를 받아서 학생에게 나눠 줄 답안지 PDF를 그림.
-  ArUco 마커, QR 코드, 이름·학번 칸, 객관식 동그라미, 주관식 칸, 바닥글을 그림
+  ArUco 마커, QR 코드, 이름·학번 칸, 객관식 동그라미, 주관식 칸을 그림
+  (2026-11-17: 칸 위치·머리글·글자 크기·굵기를 실제 인쇄본 OMR_A4_가로형_수정본_인쇄.pdf에 맞춤,
+   바닥글은 시험명·시험 ID만 남기고 문항 수 글자 없앰)
 
 [파이프라인에서 위치]
   준비 단계(답안지 생성)의 마지막 순서. 여기서 나온 PDF를 인쇄 → 학생이 마킹 → 사진 촬영 →
@@ -55,7 +57,11 @@ from reportlab.pdfgen import canvas
 from . import frame as F
 
 # 색상 값은 (R, G, B) 각각 0~1 비율 (0 = 검정, 1 = 흰색)
-GRAY = Color(0.45, 0.45, 0.45)          # 동그라미 안 숫자·안내문 (옅게: 판독 때 잉크로 덜 잡히게)
+GRAY = Color(0.45, 0.45, 0.45)          # 시험명·과목명 글자 (show_exam_info일 때만)
+# 동그라미 안 숫자: 옅고 작게 (판독 때 잉크로 덜 잡히게). 인쇄본(회색 0.267, 7pt)처럼 진하고 크게 하면
+# 가상 촬영 테스트에서 학번·객관식 판독이 조금 떨어져서(11/17) 예전 값 유지
+DIGIT = Color(0.45, 0.45, 0.45)
+CIRCLE = black                          # 동그라미 테두리 (인쇄본은 회색 0.2지만 검정이 가상 촬영 판독 결과가 더 좋음, 11/17)
 LINE = Color(0.6, 0.6, 0.6)             # 객관식 행 구분선
 HEADER_FILL = Color(0.94, 0.94, 0.94)   # 영역 머리글 배경 (팀 양식 #F0F0F0)
 
@@ -140,16 +146,17 @@ class _Pen:
         self.c.rect(x * mm, self.y(y + h), w * mm, h * mm,
                     fill=int(fill is not None), stroke=int(stroke is not None))
 
-    def circle(self, cx, cy, r, lw=0.6):
+    def circle(self, cx, cy, r, lw=0.6, color: Color = black):
         """검은 테두리 빈 원 그리기 (마킹 동그라미용).
 
         매개변수:
             cx, cy: 원 중심 (mm)
             r: 반지름 (mm)
             lw: 선 두께 (pt, 기본 0.6)
+            color: 테두리 색 (기본 검정)
         """
         self.c.setLineWidth(lw)
-        self.c.setStrokeColor(black)
+        self.c.setStrokeColor(color)
         self.c.circle(cx * mm, self.y(cy), r * mm, stroke=1, fill=0)
 
     def hline(self, x0, x1, y, lw=0.3, color=LINE):
@@ -178,7 +185,7 @@ class _Pen:
         self.c.setStrokeColor(color)
         self.c.line(x * mm, self.y(y0), x * mm, self.y(y1))
 
-    def text(self, x, y_baseline, s, size: float = 9, align="left", color: Color = black):
+    def text(self, x, y_baseline, s, size: float = 9, align="left", color: Color = black, bold=False):
         """글자 한 줄 쓰기.
 
         매개변수:
@@ -188,16 +195,34 @@ class _Pen:
             size: 글자 크기 (pt, 기본 9)
             align: 정렬 ("left" / "center" / "right")
             color: 글자 색 (기본 검정)
+            bold: True면 굵게. 동봉 글꼴에 굵은 글꼴이 없어서 글자 윤곽선을 같은 색으로 덧그려 굵게 보이게 함
         예외:
             KeyError: align이 세 값 중 하나가 아닐 때
         """
+        if bold:
+            # 텍스트 객체로 그려야 윤곽선 모드(채움+윤곽선)를 쓸 수 있음
+            w = pdfmetrics.stringWidth(s, self.font, size)
+            x0 = x * mm - {"left": 0, "center": w / 2, "right": w}[align]
+            # 글자 그리기 모드(Tr)는 PDF 그래픽 상태라 다음 글자까지 남음 → saveState/restoreState로 감싸서
+            # 뒤에 그리는 동그라미 안 숫자가 굵어지지 않게 함 (굵어지면 판독이 빈칸을 마킹으로 오인)
+            self.c.saveState()
+            t = self.c.beginText(x0, self.y(y_baseline))
+            t.setFont(self.font, size)
+            t.setTextRenderMode(2)                 # 2 = 채움 + 윤곽선
+            self.c.setFillColor(color)
+            self.c.setStrokeColor(color)
+            self.c.setLineWidth(size * 0.045)      # 윤곽선 두께 (글자 크기의 4.5%)
+            t.textOut(s)
+            self.c.drawText(t)
+            self.c.restoreState()
+            return
         self.c.setFont(self.font, size)
         self.c.setFillColor(color)
         # align 값에 맞는 reportlab 그리기 함수를 골라서 바로 호출
         {"left": self.c.drawString, "center": self.c.drawCentredString,
          "right": self.c.drawRightString}[align](x * mm, self.y(y_baseline), s)
 
-    def text_in(self, bbox, s, size: float = 9, align="center", color: Color = black, pad=2.0):
+    def text_in(self, bbox, s, size: float = 9, align="center", color: Color = black, pad=2.0, bold=False):
         """bbox 안 세로 가운데에 글자 쓰기.
 
         매개변수:
@@ -207,26 +232,28 @@ class _Pen:
             align: 가로 정렬 ("left" / "center" / "right", 기본 가운데)
             color: 글자 색 (기본 검정)
             pad: 왼쪽·오른쪽 정렬일 때 칸 테두리에서 띄우는 거리 (mm, 기본 2.0)
+            bold: True면 굵게 (text() 참고)
         """
         x, y, w, h = bbox
         # 0.352 = 1pt를 mm로 바꾸는 값. 글자 크기의 약 35%만큼 baseline을 내려서 눈으로 보기에 가운데로 맞춤
         base = y + h / 2 + size * 0.352 * 0.35      # pt → mm, 대략 세로 가운데
         tx = {"left": x + pad, "center": x + w / 2, "right": x + w - pad}[align]
-        self.text(tx, base, s, size, align, color)
+        self.text(tx, base, s, size, align, color, bold)
 
 
-def _draw_aruco(pen: _Pen, marker_id: int, x, y, size):
+def _draw_aruco(pen: _Pen, marker_id: int, x, y, size, dictionary: str = F.ARUCO_DICT_NAME):
     """ArUco 마커를 PDF 벡터 사각형으로 그림 (이미지로 붙이지 않음 → 어떤 배율로 인쇄해도 경계가 선명).
-    OpenCV로 8x8 비트 배열(6x6 패턴 + 테두리)을 얻고, 검은 바탕 위에 흰 칸만 덧그림.
+    OpenCV로 비트 배열(6x6 또는 4x4 패턴 + 테두리 1칸)을 얻고, 검은 바탕 위에 흰 칸만 덧그림.
 
     매개변수:
         pen: 그릴 _Pen
         marker_id: 마커 ID (0~3, 세로·가로 공통)
         x, y: 마커 왼쪽 위 꼭짓점 (mm)
-        size: 마커 한 변 길이 (mm, 보통 frame.MARKER_SIZE_MM = 18.249)
+        size: 마커 한 변 길이 (mm, 팀 세트 18.249 / 가로 인쇄본 세트 16.0)
+        dictionary: ArUco 사전 이름 (layout["frame"]["aruco"]["dictionary"], 예: "DICT_4X4_50")
     """
-    d = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, F.ARUCO_DICT_NAME))
-    bits = d.markerSize + 2                      # 6x6 + 검은 테두리 1칸씩
+    d = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary))
+    bits = d.markerSize + 2                      # 패턴(6x6 또는 4x4) + 검은 테두리 1칸씩
     # 1비트 = 1px인 작은 마커 이미지 (bits x bits). 값 255 = 흰 칸, 0 = 검은 칸
     img = cv2.aruco.generateImageMarker(d, marker_id, bits, borderBits=1)
     cell = size / bits                           # 비트 한 칸의 한 변 길이 (mm)
@@ -270,7 +297,8 @@ def render_pdf(layout: dict, exam: dict, out_path: str, font_path: str | None = 
     exam: {"exam_id", "exam_name", "subject", "qr_payload"} (service.create_answer_sheet에서 만듦)
     show_exam_info: True면 시험명·과목명도 인쇄 (회의 결정상 기본은 인쇄 안 함)
 
-    그리는 순서: 1) ArUco 마커 → 2) 제목 → 3) 바깥 테두리 → 4) 이름·QR 패널 → 5) 학번 → 6) 객관식 → 7) 주관식 → 8) 바닥글
+    그리는 순서: 1) ArUco 마커 → 2) 제목 → 3) 바깥 테두리 → 4) 이름·QR 패널 → 5) 학번 → 6) 객관식 → 7) 주관식
+    → 8) 바닥글 (시험명 · 시험 ID만. 양식 ID·인쇄 안내문·"문항 수" 글자는 2026-11-17에 없앰)
 
     매개변수:
         layout: compute_layout()이 만든 layout dict (frame, title_center_mm, sheet_frame_bbox_mm, info_header_bbox_mm,
@@ -299,84 +327,88 @@ def render_pdf(layout: dict, exam: dict, out_path: str, font_path: str | None = 
     # 1) ArUco 마커 4개 — corners_mm[0] = 마커 왼쪽 위 꼭짓점
     for m in fr["aruco"]["markers"]:
         x, y = m["corners_mm"][0]
-        _draw_aruco(pen, m["id"], x, y, fr["aruco"]["marker_size_mm"])
+        _draw_aruco(pen, m["id"], x, y, fr["aruco"]["marker_size_mm"], fr["aruco"]["dictionary"])
 
     # 2) 제목 (시험명·과목명은 기본적으로 인쇄하지 않음)
     tx, ty = layout["title_center_mm"]
-    pen.text(tx, ty + 3, "OMR 답안지", size=24, align="center")
+    pen.text(tx, ty + 3, "OMR 답안지", size=27, align="center", bold=True)
     if show_exam_info:
         pen.text(tx, ty + 8, f"{exam.get('subject', '')}  {exam.get('exam_name', '')}",
                  size=8, align="center", color=GRAY)
 
     ha = layout["header_align"]                 # 머리글 글자 정렬 (가로 양식 "center" / 세로 양식 "left")
-    hsize = 11 if ha == "center" else 10        # 머리글 글자 크기 (pt)
+    hsize = 13 if ha == "center" else 10        # 머리글 글자 크기 (pt). 가로는 인쇄본과 같은 13pt
     # 3) 바깥 큰 테두리 + 정보 패널 위 빈 머리글 칸 (가로 양식만 있음)
     if layout["sheet_frame_bbox_mm"]:
-        pen.rect(layout["sheet_frame_bbox_mm"], lw=0.85)
+        pen.rect(layout["sheet_frame_bbox_mm"], lw=1.0)
     if layout["info_header_bbox_mm"]:
         pen.rect(layout["info_header_bbox_mm"], fill=HEADER_FILL, lw=0.85)
+        pen.text_in(layout["info_header_bbox_mm"], "시험 정보", hsize, align=ha, bold=True)
 
     # 4) 이름 / QR 패널: 패널 테두리 → 이름 글자 칸(회색) → 이름 쓰는 칸 → QR 패널·네모 칸 → QR
     pen.rect(layout["info_panel_bbox_mm"], lw=0.85)
     nb = layout["name_box"]
     pen.rect(nb["label_bbox_mm"], fill=HEADER_FILL, lw=0.6)
-    pen.text_in(nb["label_bbox_mm"], nb["label"], 10)
+    pen.text_in(nb["label_bbox_mm"], nb["label"], 10, bold=True)
     pen.rect(nb["bbox_mm"], lw=0.6)
     qb = layout["qr_box"]
     pen.rect(qb["panel_bbox_mm"], lw=0.6)
     if qb["label_bbox_mm"]:
-        pen.text_in(qb["label_bbox_mm"], "QR 코드", 8)
+        pen.text_in(qb["label_bbox_mm"], "QR 코드", 8, bold=True)
     pen.rect(qb["bbox_mm"], lw=0.6)
     _draw_qr(pen, exam["qr_payload"], fr["qr"]["bbox_mm"])   # QR은 네모 칸 안 가운데 (frame.py 고정 위치)
 
     # 5) 학번: 머리글 + 손글씨 칸 + 자리별 줄 칸 + 0~9 동그라미 (동그라미 안 회색 숫자는 학생 안내용)
     sid = layout["student_id"]
-    pen.rect(sid["bbox_mm"], lw=0.85)
+    pen.rect(sid["bbox_mm"], lw=0.45)          # 인쇄본처럼 얇게
     pen.rect(sid["header_bbox_mm"], fill=HEADER_FILL, lw=0.6)
-    pen.text_in(sid["header_bbox_mm"], "학번", 10)
+    pen.text_in(sid["header_bbox_mm"], "학번", 10.5, bold=True)
     for wb in sid["write_boxes"]:
         pen.rect(wb["bbox_mm"], lw=0.4)
     for cb in sid["column_boxes"]:
         pen.rect(cb["bbox_mm"], lw=0.4)
     for b in sid["bubbles"]:
         cx, cy = b["center_mm"]
-        pen.circle(cx, cy, b["radius_mm"], lw=0.55)
+        pen.circle(cx, cy, b["radius_mm"], lw=0.57, color=CIRCLE)
         # 숫자 baseline을 중심보다 0.8mm 아래로 → 5pt 숫자가 동그라미 가운데쯤에 오게
-        pen.text(cx, cy + 0.8, str(b["value"]), size=5, align="center", color=GRAY)
+        pen.text(cx, cy + 0.8, str(b["value"]), size=5, align="center", color=DIGIT)
 
-    # 6) 객관식: 영역 테두리, 머리글, 문항 수, 행 칸·번호 칸, 선지 동그라미
+    # 6) 객관식: 영역 테두리, 머리글, 행 칸·번호 칸, 선지 동그라미
     mcq = layout["mcq"]
     pen.rect(mcq["bbox_mm"], lw=0.85)
     pen.rect(mcq["header_bbox_mm"], fill=HEADER_FILL, lw=0.85)
-    pen.text_in(mcq["header_bbox_mm"], "객관식", hsize, align=ha)
-    pen.text_in(mcq["count_label_bbox_mm"], f"문항 수: {mcq['num_questions']}", 7.5,
-                align="right" if ha == "left" else "left")
+    pen.text_in(mcq["header_bbox_mm"], "객관식", hsize, align=ha, bold=True)
     for q in mcq["questions"]:
         pen.rect(q["row_bbox_mm"], lw=0.4)
         pen.rect(q["number_bbox_mm"], lw=0.4)
-        pen.text_in(q["number_bbox_mm"], str(q["q"]), 7)
+        pen.text_in(q["number_bbox_mm"], str(q["q"]), 8)
         for ch in q["choices"]:
             cx, cy = ch["center_mm"]
-            pen.circle(cx, cy, ch["radius_mm"], lw=0.55)
-            pen.text(cx, cy + 0.85, str(ch["choice"]), size=5.5, align="center", color=GRAY)
-    # 열마다 바깥 테두리 (행 칸보다 굵게)
+            pen.circle(cx, cy, ch["radius_mm"], lw=0.57, color=CIRCLE)
+            pen.text(cx, cy + 0.85, str(ch["choice"]), size=5.5, align="center", color=DIGIT)
+    # 열마다 바깥 테두리 (인쇄본처럼 행 칸과 같은 굵기)
     for col in mcq["columns"]:
-        pen.rect(col["bbox_mm"], lw=0.8)
+        pen.rect(col["bbox_mm"], lw=0.45)
 
     # 7) 주관식: 영역 테두리, 머리글, 번호 칸 + 답 칸 (답 칸 안쪽 answer_bbox가 OCR 영역)
     sa = layout["short_answers"]
     pen.rect(sa["bbox_mm"], lw=0.85)
     pen.rect(sa["header_bbox_mm"], fill=HEADER_FILL, lw=0.85)
-    pen.text_in(sa["header_bbox_mm"], "주관식", hsize, align=ha)
+    pen.text_in(sa["header_bbox_mm"], "주관식", hsize, align=ha, bold=True)
     for it in sa["items"]:
         pen.rect(it["number_bbox_mm"], lw=0.6)
-        pen.text_in(it["number_bbox_mm"], str(it["no"]), 9)
+        if layout["orientation"] == "landscape":
+            # 가로: 인쇄본처럼 번호를 크게(18pt) 칸 왼쪽 위에
+            nx, ny = it["number_bbox_mm"][:2]
+            pen.text(nx + 2.2, ny + 7.0, str(it["no"]), size=18)
+        else:
+            pen.text_in(it["number_bbox_mm"], str(it["no"]), 9)
         pen.rect(it["box_bbox_mm"], lw=0.6)
 
-    # 8) 바닥글: 시험 ID·양식 ID (QR이 훼손돼도 사람이 확인 가능), 100% 인쇄 안내
-    #    위치: 가로 가운데, 용지 아래 끝에서 12mm 위
-    pen.text(W / 2, H - 12, f"{exam['exam_id']} · {layout['template_id']} v{layout['template_version']} · "
-             f"인쇄 시 '실제 크기(100%)'로 인쇄하세요", size=6.5, align="center", color=GRAY)
+    # 8) 바닥글: 시험명 · 시험 ID (QR이 훼손돼도 사람이 어느 시험 답안지인지 확인 가능)
+    #    위치: 가로 가운데, 용지 아래 끝에서 12mm 위 (아래쪽 마커 사이, 표 바깥)
+    foot = " · ".join(v for v in (exam.get("exam_name", ""), exam["exam_id"]) if v)
+    pen.text(W / 2, H - 12, foot, size=7, align="center")
     # 페이지를 마무리하고 파일로 저장
     c.showPage()
     c.save()

@@ -110,6 +110,12 @@ MARKER_SETS = {
 }
 
 
+# 답안지 생성기가 그릴 마커 세트 (방향별). 2026-11-17 가로는 실제 인쇄본과 같은 마커(4x4, 16mm, 같은 자리)로 바꿈
+#   → 생성 답안지의 마커 크기·위치, 마커와 표 사이 간격이 인쇄본과 같아짐. 세로 인쇄본 값은 실측 확인 전이라 팀 양식 유지
+#   align.py는 두 세트를 모두 찾으므로 예전에 인쇄한 6x6 답안지도 그대로 읽힘
+GENERATOR_MARKER_SET = {"landscape": "print", "portrait": "team"}
+
+
 def page_size(orientation: str) -> tuple[float, float]:
     """방향 → 용지 (가로, 세로) mm.
 
@@ -204,6 +210,9 @@ def frame_dict(orientation: str) -> dict:
         KeyError: 잘못된 방향 문자열일 때
     """
     cfg = ORIENTATIONS[orientation]                 # 이 방향의 고정값 표
+    set_name = GENERATOR_MARKER_SET[orientation]    # 이 방향에 그릴 마커 세트
+    ms = MARKER_SETS[set_name]
+    size = ms["geometry"][orientation][0] if ms["geometry"] else MARKER_SIZE_MM
     w_px, h_px = canonical_size_px(orientation)     # 정렬 이미지 가로·세로 px
     return {
         "orientation": orientation,
@@ -212,9 +221,9 @@ def frame_dict(orientation: str) -> dict:
         "origin": "top-left",
         "canonical": {"dpi": CANONICAL_DPI, "width_px": w_px, "height_px": h_px},
         "aruco": {
-            "dictionary": ARUCO_DICT_NAME,
-            "marker_size_mm": MARKER_SIZE_MM,
-            "markers": [{"id": cfg["marker_ids"][p], "pos": p, "corners_mm": marker_corners_mm(orientation, p)}
+            "dictionary": ms["dictionary"],
+            "marker_size_mm": size,
+            "markers": [{"id": ms["marker_ids"][p], "pos": p, "corners_mm": marker_corners_mm(orientation, p, set_name)}
                         for p in ("TL", "TR", "BR", "BL")],
         },
         "qr": {

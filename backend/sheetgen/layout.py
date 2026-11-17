@@ -81,7 +81,7 @@ from dataclasses import asdict, dataclass
 from . import frame as F
 
 SCHEMA_VERSION = "0.2"   # layout.json 구조 버전 (키 이름·구조를 바꾸면 올림)
-TEMPLATE_VERSION = "2"   # 칸 배치 버전 (2 = 팀 양식 치수, 2026-10-14). 배치 계산 코드를 바꾸면 반드시 올릴 것 (옛 인쇄본과 좌표 섞임 방지)
+TEMPLATE_VERSION = "3"   # 칸 배치 버전 (2 = 팀 양식 치수 2026-10-14, 3 = 가로 객관식·주관식을 인쇄본 위치로 2026-11-17). 배치 계산 코드를 바꾸면 반드시 올릴 것 (옛 인쇄본과 좌표 섞임 방지)
 
 # ---- 입력 범위 (프론트엔드도 /api/sheet-options로 같은 값을 받아 씀 → 숫자는 여기 한 곳에만) ----
 NUM_QUESTIONS_RANGE = (5, 45)   # 객관식 문항 수 (최소, 최대) — 양 끝 포함
@@ -112,7 +112,8 @@ SID_BUBBLE_R = 1.75      # 학번 동그라미 반지름 (지름 3.5mm)
 TEAM_FORM = {
     "landscape": {
         "title_center": [148.5, 15.0],
-        "mcq_col_x": [83.78, 123.81, 163.9], "mcq_row_top": 48.5, "mcq_row_h": 8.6, "mcq_row_w": 40.1,
+        # 객관식 열 x: 실제 인쇄본(OMR_A4_가로형_수정본_인쇄.pdf) 값 (v3, 2026-11-17). 팀 json은 83.78/123.81/163.9 (1.67mm 오른쪽)
+        "mcq_col_x": [82.11, 122.14, 162.22], "mcq_row_top": 48.5, "mcq_row_h": 8.6, "mcq_row_w": 40.1,
         "mcq_num_w": 8.0, "mcq_choice_center": 24.05, "mcq_choice_pitch": 5.5,
         "sid_header": [13.0, 65.0, 66.24, 8.0], "sid_col_w": 6.624,
         "sid_write_y": 73.0, "sid_write_h": 6.0, "sid_col_y": 79.0, "sid_col_h": 62.0,
@@ -427,11 +428,12 @@ def _landscape(spec: SheetSpec) -> dict:
                    "bbox_mm": [32.0, 148.5, 30.0, 30.0]},
         "header_align": "center",
         "student_id": _student_id_block(g, spec.student_id_digits),
-        "mcq": _mcq_block(g, spec.num_questions, spec.num_choices, header_bbox=[80.62, 28.0, 123.38, 11.0],
-                          bbox=[80.62, 28.0, 123.38, 159.0], count_label_bbox=[84.0, 39.0, 43.0, 8.0]),
-        "short_answers": _short_answer_block(204.17, 39.0, 83.82, _r(sa_row_h), spec.num_short_answers, 7.57,
-                                             header_bbox=[204.0, 28.0, 84.0, 11.0],
-                                             bbox=[204.0, 28.0, 84.0, 159.0]),
+        # 객관식·주관식 경계 x 203.58, 주관식 번호 칸 폭 7.61: 실제 인쇄본 값 (v3, 2026-11-17)
+        "mcq": _mcq_block(g, spec.num_questions, spec.num_choices, header_bbox=[80.62, 28.0, 122.96, 11.0],
+                          bbox=[80.62, 28.0, 122.96, 159.0], count_label_bbox=[84.0, 39.0, 43.0, 8.0]),
+        "short_answers": _short_answer_block(203.58, 39.0, 84.42, _r(sa_row_h), spec.num_short_answers, 7.61,
+                                             header_bbox=[203.58, 28.0, 84.42, 11.0],
+                                             bbox=[203.58, 28.0, 84.42, 159.0]),
     }
 
 
