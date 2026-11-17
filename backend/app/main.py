@@ -43,6 +43,7 @@ http://localhost:8000/docs 에서는 아래 API를 직접 눌러 시험해 볼 �
     GET    /api/sheet-options                          입력 가능한 범위 (프론트엔드가 폼을 만들 때 사용)
     POST   /api/answer-sheets                          답안지 생성 → 시험 ID, PDF 주소 반환
     GET    /api/answer-sheets/{exam_id}                시험 기록 (exam.json)
+    PATCH  /api/answer-sheets/{exam_id}                총점 바꾸기 (소유자·관리자)
     GET    /api/answer-sheets/{exam_id}/pdf            답안지 PDF (?download=true 면 내려받기)
     GET    /api/templates/{template_id}/{version}      양식 좌표 (layout.json)
 
@@ -142,7 +143,7 @@ class AnswerSheetRequest(BaseModel):
 
     예:
         {"num_questions": 20, "num_choices": 5, "orientation": "portrait",
-         "exam_name": "중간고사", "subject": "컴퓨터비전"}
+         "exam_name": "중간고사", "subject": "컴퓨터비전", "total_score": 100}
     """
     # 객관식 문항 수 (필수, 정수 5~45)
     num_questions: int = Field(..., ge=NUM_QUESTIONS_RANGE[0], le=NUM_QUESTIONS_RANGE[1],
@@ -156,6 +157,13 @@ class AnswerSheetRequest(BaseModel):
     exam_name: str = Field("", max_length=service.MAX_EXAM_NAME, pattern=r"^[^|]*$")
     # 과목명 (선택, 20자 이하, 답안지에 인쇄 안 함. exam.json에 저장). '|' 금지는 시험명과 같은 이유
     subject: str = Field("", max_length=service.MAX_SUBJECT, pattern=r"^[^|]*$")
+    # 총점 (웹에서는 필수로 받음. 스크립트 호환을 위해 API 는 선택, None = 배점 합을 총점으로 씀)
+    total_score: float | None = Field(None, ge=service.MIN_TOTAL_SCORE, le=service.MAX_TOTAL_SCORE)
+
+
+class TotalScoreRequest(BaseModel):
+    """PATCH /api/answer-sheets/{exam_id} 요청 본문. 예: {"total_score": 100} (null 이면 총점 지움)"""
+    total_score: float | None = Field(None, ge=service.MIN_TOTAL_SCORE, le=service.MAX_TOTAL_SCORE)
 
 
 class AnswerSheetResponse(BaseModel):
@@ -176,6 +184,7 @@ class AnswerSheetResponse(BaseModel):
     orientation: str        # "portrait"(세로) / "landscape"(가로)
     num_questions: int      # 객관식 문항 수
     num_choices: int        # 선지 수
+    total_score: float | None = None    # 총점 (시험 만들 때 입력. None = 총점 기능 이전 시험 → 배점 합을 씀)
     created_at: str         # 생성 시각, 한국 시간 ISO 형식 (예: "2026-10-01T14:03:22+09:00")
     pdf_url: str            # 답안지 PDF 주소 (뒤에 ?download=true 붙이면 내려받기)
     template_url: str       # 양식 좌표 JSON 주소
@@ -284,6 +293,25 @@ def get_answer_sheet(exam_id: str, user: dict = Depends(current_user)):
         HTTP 404: 시험이 없거나 ID 형식이 틀림
     """
     return _to_response(_require_exam(exam_id, user), user)
+
+
+@app.patch("/api/answer-sheets/{exam_id}", response_model=AnswerSheetResponse)
+def patch_answer_sheet(exam_id: str, req: TotalScoreRequest, user: dict = Depends(current_user)):
+    """총점 바꾸기 (PATCH /api/answer-sheets/{exam_id}). 소유자·관리자만.
+
+    예외:
+        HTTP 403: 소유자·관리자가 아님
+        HTTP 404: 시험이 없음
+        HTTP 422: 총점 범위 밖
+    """
+    _require_exam(exam_id, user, access.OWNER)
+    try:
+        rec = service.set_total_score(exam_id, req.total_score)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if rec is None:
+        raise HTTPException(404, "시험을 찾을 수 없습니다")
+    return _to_response(rec, user)
 
 
 @app.get("/api/answer-sheets/{exam_id}/pdf")

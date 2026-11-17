@@ -682,6 +682,8 @@ async function pageNew() {
           <input type="text" id="exam_name" maxlength="30" placeholder="예) 2026학년도 2학기 중간고사"></div>
         <div class="field"><label for="subject">과목명</label>
           <input type="text" id="subject" maxlength="20" placeholder="예) 컴퓨터비전"></div>
+        <div class="field"><label for="total_score">총점</label>
+          <div class="row"><input type="number" id="total_score" min="1" max="100" step="0.5" placeholder="예) 100" style="width:140px">점</div></div>
         <div class="field"><span class="label">객관식 문항 수 <span class="hint">${o.num_questions.min}~${o.num_questions.max}</span></span>
           <div class="qrow">
             <input type="range" id="q_range" min="${o.num_questions.min}" max="${o.num_questions.max}" step="1" aria-label="문항 수 슬라이더">
@@ -714,8 +716,10 @@ async function pageNew() {
     const ch = []; for (let k = o.num_choices.min; k <= o.num_choices.max; k++) ch.push({ value: k, label: `${k}지선다` });
     seg($("choices"), ch, "num_choices");
     seg($("ori"), o.orientations, "orientation");
-    $("summary").textContent = `${oriText(st.orientation)} A4 · 객관식 ${st.num_questions}문항(${st.num_choices}지선다) · 서술형 ${o.short_answers}문항 · 학번 10자리`;
+    const ts = Number($("total_score").value);
+    $("summary").textContent = `${oriText(st.orientation)} A4 · 객관식 ${st.num_questions}문항(${st.num_choices}지선다) · 서술형 ${o.short_answers}문항 · 학번 10자리${ts > 0 ? ` · 총점 ${fmtNum(ts)}점` : ""}`;
   }
+  $("total_score").oninput = draw;
   $("q_range").oninput = (e) => setQ(e.target.value);
   $("q_num").onchange = (e) => setQ(e.target.value);
   $("q_dec").onclick = () => setQ(st.num_questions - 1);
@@ -727,9 +731,11 @@ async function pageNew() {
     const exam_name = $("exam_name").value.trim(), subject = $("subject").value.trim();
     const err = $("err"); err.style.display = "none";
     if ((exam_name + subject).includes("|")) { err.style.display = ""; err.textContent = "시험명·과목명에는 | 문자를 쓸 수 없습니다."; return; }
+    const total_score = Number($("total_score").value);
+    if (!$("total_score").value || !(total_score >= 1) || total_score > 100) { err.style.display = ""; err.textContent = "총점은 1~100점으로 입력하세요."; $("total_score").focus(); return; }
     $("submit").disabled = true; $("submit").textContent = "만드는 중…";
     try {
-      const rec = await api("/api/answer-sheets", jsonBody("POST", { ...st, exam_name, subject }));
+      const rec = await api("/api/answer-sheets", jsonBody("POST", { ...st, exam_name, subject, total_score }));
       app.exam = rec; app.key = null; app.sheets = [];
       remember(rec.exam_id);
       toast("답안지를 만들었습니다");
@@ -755,6 +761,7 @@ function showSheet() {
           <tr><td class="muted">시험명</td><td>${esc(e.exam_name) || "-"}</td></tr>
           <tr><td class="muted">과목명</td><td>${esc(e.subject) || "-"}</td></tr>
           <tr><td class="muted">문항</td><td>객관식 ${e.num_questions}문항 · ${e.num_choices}지선다</td></tr>
+          <tr><td class="muted">총점</td><td>${e.total_score != null ? `${fmtNum(e.total_score)}점` : "-"}</td></tr>
           <tr><td class="muted">방향</td><td>${oriText(e.orientation)}</td></tr>
           <tr><td class="muted">시험 ID</td><td class="mono">${esc(e.exam_id)}</td></tr>
           <tr><td class="muted">양식</td><td class="mono">${esc(e.template_id)} v${esc(e.template_version)}</td></tr>
@@ -769,7 +776,7 @@ function showSheet() {
 async function pageOverview() {
   await refreshExamState();
   const e = app.exam, p = progress();
-  setTop(e.exam_name || "(시험명 없음)", `${e.subject ? esc(e.subject) + " · " : ""}객관식 ${e.num_questions}문항 · ${e.num_choices}지선다 · <span class="mono">${esc(e.exam_id)}</span>`);
+  setTop(e.exam_name || "(시험명 없음)", `${e.subject ? esc(e.subject) + " · " : ""}객관식 ${e.num_questions}문항 · ${e.num_choices}지선다${e.total_score != null ? ` · 총점 ${fmtNum(e.total_score)}점` : ""} · <span class="mono">${esc(e.exam_id)}</span>`);
 
   const steps = [
     { n: 1, done: true, hash: "#/new", t: "답안지 만들기", d: "" },
@@ -850,7 +857,9 @@ async function pageKey() {
         <h2 style="margin:0">정답표</h2>
         <span class="pill gray" id="cnt"></span>
         <span class="pill blue" id="totalPts"></span>
-        <span style="margin-left:auto" class="row small">기본 배점
+        <span style="margin-left:auto" class="row small">총점
+          <input type="number" id="examTotal" min="1" max="100" step="0.5" value="${e.total_score ?? ""}" style="width:80px" ${scope.all ? "" : "disabled"}>점</span>
+        <span class="row small">기본 배점
           <input type="number" id="defPts" min="0" step="0.5" value="${defPts}" style="width:72px" ${scope.all ? "" : "disabled"}>점</span>
       </div>
       ${!scope.all && scope.key.length ? `<div class="msg info" style="margin-top:12px">내가 맡은 문항: ${esc(scope.sections.join(", "))} (${scope.key[0]}~${scope.key[scope.key.length - 1]}번)</div>` : ""}
@@ -877,12 +886,27 @@ async function pageKey() {
     </div>
 `;
 
-  // 총점(만점) = 문항별 배점 합. 배점 칸이 비어 있으면 기본 배점
-  function drawTotal() {
+  // 배점 합 = 문항별 배점 합(배점 칸이 비어 있으면 기본 배점) + 서술형 배점.
+  // 시험 만들 때 넣은 총점이 있으면 배점 합과 비교 → 다르면 빨간 표시 (자동으로 맞추지 않음)
+  // 총점이 없는 이전 시험은 예전처럼 배점 합을 총점으로 표시
+  function pointSum() {
     const d = Number($("defPts").value || 1);
     let t = 0; for (let q = 1; q <= N; q++) t += pts[q] ?? d;
     const et = Object.values(ePts).reduce((a, b) => a + b, 0);
-    $("totalPts").textContent = et ? `총점 ${fmtNum(t + et)}점 (객관식 ${fmtNum(t)} · 서술형 ${fmtNum(et)})` : `총점 ${fmtNum(t)}점`;
+    return { t, et, sum: t + et };
+  }
+  const examTotal = () => { const v = Number($("examTotal").value); return $("examTotal").value !== "" && v >= 1 && v <= 100 ? v : null; };
+  const sameScore = (a, b) => Math.abs(a - b) < 1e-6;
+  function drawTotal() {
+    const { t, et, sum } = pointSum(), T = examTotal();
+    const parts = et ? ` (객관식 ${fmtNum(t)} · 서술형 ${fmtNum(et)})` : "";
+    if (T == null) {
+      $("totalPts").textContent = `총점 ${fmtNum(sum)}점${parts}`;
+      $("totalPts").className = "pill blue";
+    } else {
+      $("totalPts").textContent = `배점 합 ${fmtNum(sum)} / 총점 ${fmtNum(T)}점${parts}`;
+      $("totalPts").className = `pill ${sameScore(sum, T) ? "ok" : "bad"}`;
+    }
     if ($("essayPts")) $("essayPts").textContent = `서술형 ${fmtNum(et)}점`;
   }
   function draw() {
@@ -920,6 +944,7 @@ async function pageKey() {
     drawTotal();
   };
   $("defPts").onchange = draw;
+  $("examTotal").oninput = drawTotal;
   if ($("essays")) $("essays").oninput = (ev) => {
     const p = ev.target.closest("input.epts"), t = ev.target.closest("textarea.eans");
     if (p) { const v = Number(p.value); if (p.value === "" || !(v > 0)) delete ePts[p.dataset.n]; else ePts[p.dataset.n] = v; drawTotal(); }
@@ -934,12 +959,22 @@ async function pageKey() {
     const answers = {}, points = {};
     for (const q of scope.key) { answers[q] = ans[q]; points[q] = pts[q] ?? ""; }
     const body = { answers, points };
+    const T = examTotal(), { sum } = pointSum();
+    if (scope.all) {
+      if ($("examTotal").value !== "" && T == null) { err.style.display = ""; err.textContent = "총점은 1~100점으로 입력하세요."; return; }
+      if (T != null && !sameScore(sum, T) && !confirm(`배점 합(${fmtNum(sum)}점)이 총점(${fmtNum(T)}점)과 다릅니다. 그대로 저장할까요?`)) return;
+    }
     if (scope.all) {
       body.default_points = Number($("defPts").value || 1);
       body.essay_points = {}; body.essay_answers = {};
       for (let n = 1; n <= NE; n++) { body.essay_points[n] = ePts[n] ?? ""; body.essay_answers[n] = (eAns[n] || "").trim(); }
     }
     try {
+      // 총점을 바꿨으면 먼저 시험 기록에 저장
+      if (scope.all && T !== (e.total_score ?? null)) {
+        const rec = await api(`/api/answer-sheets/${e.exam_id}`, jsonBody("PATCH", { total_score: T }));
+        e.total_score = rec.total_score;
+      }
       const r = await api(`/api/exams/${e.exam_id}/answer-key/draft`, jsonBody("PATCH", body));
       app.key = r.complete ? await api(`/api/exams/${e.exam_id}/answer-key`).catch(() => null) : null;
       renderSide();

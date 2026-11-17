@@ -162,7 +162,7 @@ def new_exam_id() -> str:
 
 
 def create_answer_sheet(num_questions: int, num_choices: int, orientation: str = "portrait",
-                        exam_name: str = "", subject: str = "") -> dict:
+                        exam_name: str = "", subject: str = "", total_score: float | None = None) -> dict:
     """답안지 생성 메인 함수. 순서: 입력 검사 → 양식 좌표 계산·저장 → 시험 ID 발급 → QR 내용 → PDF → exam.json
 
     처리 순서:
@@ -177,6 +177,7 @@ def create_answer_sheet(num_questions: int, num_choices: int, orientation: str =
         orientation: "portrait"(세로, 기본) 또는 "landscape"(가로)
         exam_name: 시험명 (선택, 30자 이하, 예: "2026학년도 2학기 중간고사")
         subject: 과목명 (선택, 20자 이하, 예: "컴퓨터비전")
+        total_score: 총점 (선생님이 시험 만들 때 입력, 예: 100). None 이면 정답 입력의 배점 합을 총점으로 씀
     반환:
         시험 기록 dict (exam.json에 저장한 것과 같은 내용). 예:
         {"exam_id": "EX-20261013-8C7353", "exam_name": "중간고사", "subject": "컴퓨터비전",
@@ -194,6 +195,7 @@ def create_answer_sheet(num_questions: int, num_choices: int, orientation: str =
     # '|' 는 QR 내용의 구분 문자라서 시험명·과목명 안에 있으면 QR을 잘못 나누게 됨
     if "|" in exam_name + subject:
         raise ValueError("시험명·과목명에는 '|' 문자를 쓸 수 없습니다")
+    total_score = _check_total(total_score)
 
     spec = SheetSpec(num_questions=num_questions, num_choices=num_choices, orientation=orientation)
     layout = compute_layout(spec)          # 범위 검사(5~45, 2~5)도 여기서
@@ -216,6 +218,7 @@ def create_answer_sheet(num_questions: int, num_choices: int, orientation: str =
         "orientation": orientation,                          # 용지 방향
         "num_questions": num_questions,                      # 객관식 문항 수
         "num_choices": num_choices,                          # 선지 수
+        "total_score": total_score,                          # 총점 (None = 배점 합으로 대신 씀)
         "qr_payload": qr,                                    # QR에 넣은 문자열
     }
     render_pdf(layout, record, pdf_path)
@@ -240,6 +243,40 @@ def get_exam(exam_id: str) -> dict | None:
         return None
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+MIN_TOTAL_SCORE = 1         # 총점 하한
+MAX_TOTAL_SCORE = 100       # 총점 상한
+
+
+def _check_total(total_score: float | None) -> float | None:
+    """총점 검사. None 은 그대로(총점 미입력), 1~100점 밖이면 ValueError. 정수면 int 로 저장."""
+    if total_score is None:
+        return None
+    v = float(total_score)
+    if not (MIN_TOTAL_SCORE <= v <= MAX_TOTAL_SCORE):
+        raise ValueError(f"총점은 {MIN_TOTAL_SCORE}~{MAX_TOTAL_SCORE}점이어야 합니다")
+    return int(v) if v.is_integer() else v
+
+
+def set_total_score(exam_id: str, total_score: float | None) -> dict | None:
+    """시험의 총점 바꾸기 (exam.json 의 total_score). 정답 입력 화면에서 소유자·관리자가 고칠 때 씀.
+
+    매개변수:
+        exam_id: 시험 ID
+        total_score: 새 총점 (None 이면 지움 → 배점 합을 총점으로 씀)
+    반환:
+        바뀐 시험 기록 dict. 시험이 없으면 None
+    예외:
+        ValueError: 총점 범위 밖
+    """
+    rec = get_exam(exam_id)
+    if rec is None:
+        return None
+    rec["total_score"] = _check_total(total_score)
+    with open(os.path.join(EXAM_DIR, exam_id, "exam.json"), "w", encoding="utf-8") as f:
+        json.dump(rec, f, ensure_ascii=False, indent=2)
+    return rec
 
 
 def list_exams() -> list[dict]:
