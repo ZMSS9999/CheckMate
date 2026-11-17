@@ -6,7 +6,7 @@
 2026-11 추가: **잉크 농도 판독**(기본 판독 방식 변경), **로그인·계정·시험별 권한**, **문항 범위 담당**(통합 시험),
 **관리자 화면**, **검수 화면 좌우 배치**(왼쪽 사진, 오른쪽 문항 확인).
 
-3주차 회의 결정사항을 반영했습니다.
+3주차 회의 결정사항을 반영함.
 - 객관식 **문항 수 5~45**, **선지 수 2~5** (1 단위로 웹에서 선택)
 - 주관식 **5문항 고정** (단답형~한 문장)
 - 시험지에는 **이름·학번만** 기입, **시험명·과목명은 QR코드**에 저장
@@ -84,8 +84,8 @@ API 문서는 http://localhost:8000/docs 에서 볼 수 있음. `/api/auth/statu
 }
 ```
 
-범위 검사는 세 곳에서 합니다: 프론트엔드(입력 제한), FastAPI(pydantic `Field(ge, le)` → 범위 밖이면 422), `SheetSpec.validate()`.
-범위 숫자는 `layout.py`의 `NUM_QUESTIONS_RANGE`, `NUM_CHOICES_RANGE` 한 곳에만 있고, 프론트엔드는 `GET /api/sheet-options`로 받아 씁니다.
+범위 검사는 세 곳에서 함: 프론트엔드(입력 제한), FastAPI(pydantic `Field(ge, le)` → 범위 밖이면 422), `SheetSpec.validate()`.
+범위 숫자는 `layout.py`의 `NUM_QUESTIONS_RANGE`, `NUM_CHOICES_RANGE` 한 곳에만 있고, 프론트엔드는 `GET /api/sheet-options`로 받아 씀.
 
 응답 (201):
 ```json
@@ -106,7 +106,7 @@ API 문서는 http://localhost:8000/docs 에서 볼 수 있음. `/api/auth/statu
 | `GET /api/answer-sheets/{exam_id}/pdf` | PDF (`?download=true`면 내려받기) |
 | `GET /api/templates/{template_id}/{version}` | 양식 좌표 JSON |
 
-웹 담당이 React로 화면을 새로 만들 때는 위 API를 그대로 호출하면 됩니다. CORS는 `localhost:5173`, `localhost:3000`을 허용해 두었습니다.
+웹 담당이 React로 화면을 새로 만들 때는 위 API를 그대로 호출하면 됨. CORS는 `localhost:5173`, `localhost:3000`을 허용해 둠.
 
 ## 채점 흐름 (2-3 규칙 기반 판독, 2-4 채점·엑셀)
 
@@ -129,7 +129,7 @@ python tools/grade_photos.py --exam-id EX-... --key 정답표.xlsx --photos ./ph
 ```
 
 인쇄·촬영 없이 한 번에 시험해 보려면: `python tools/demo_end_to_end.py --students 15`
-(가상 학생 15명의 답안지 사진을 만들어 판독·채점하고 `demo_out/results.xlsx`를 만듭니다.)
+(가상 학생 15명의 답안지 사진을 만들어 판독·채점하고 `demo_out/results.xlsx`를 만듦.)
 
 ### 웹 API로
 
@@ -151,7 +151,7 @@ python tools/grade_photos.py --exam-id EX-... --key 정답표.xlsx --photos ./ph
 
 로그인·계정·권한 API는 아래 '로그인·계정·권한' 참고.
 
-http://localhost:8000/docs 에서 파일을 직접 올려 시험해 볼 수 있습니다.
+http://localhost:8000/docs 에서 파일을 직접 올려 시험해 볼 수 있음.
 
 ### P3 규칙 기반 판독 (`pipeline/read.py`)
 
@@ -213,9 +213,9 @@ python tools/synth_eval.py --data <가공 폴더> --ref <원본 synthetic_datase
 | 무응답 | 0점 |
 | 판정 보류 | **검수 대기** (점수에 넣지 않음) |
 
-검수 대기 문항이 있거나 학번이 불완전하면 답안지 상태가 **검수 대기**가 되고, 엑셀에서 확정 점수와 따로 표시됩니다
-('현재 확정분'과 '최고 가능 점수'). 검수에서 답을 고치면(`review`) 그 답으로 다시 채점되어 **확정**이 됩니다.
-정렬에 실패한 사진은 **재촬영 필요**로 남고, QR이 다른 시험인 사진은 이 시험 결과에 저장하지 않습니다.
+검수 대기 문항이 있거나 학번이 불완전하면 답안지 상태가 **검수 대기**가 되고, 엑셀에서 확정 점수와 따로 표시됨
+('현재 확정분'과 '최고 가능 점수'). 검수에서 답을 고치면(`review`) 그 답으로 다시 채점되어 **확정**이 됨.
+정렬에 실패한 사진은 **재촬영 필요**로 남고, QR이 다른 시험인 사진은 이 시험 결과에 저장하지 않음.
 
 ### 채점 결과 엑셀 시트
 
@@ -225,7 +225,7 @@ python tools/synth_eval.py --data <가공 폴더> --ref <원본 synthetic_datase
 4. **검수 대기**: 확인할 문항·학번과 칸별 채움 비율
 5. **정답표**: 채점에 쓴 정답·배점
 
-주관식 5문항은 5단계(OCR·채점)에서 연결할 예정이라 아직 점수에 들어가지 않습니다.
+주관식 5문항은 5단계(OCR·채점)에서 연결할 예정이라 아직 점수에 들어가지 않음.
 
 ### 가상 데이터 판독 결과 (`demo_end_to_end.py`, 학생 15명 × 20문항, 이전 채움 비율 방식 기준)
 
@@ -237,7 +237,7 @@ python tools/synth_eval.py --data <가공 폴더> --ref <원본 synthetic_datase
 | 반만 옅게 칠함 | 28 | 0 | 28 | 0 |
 | 지우고 다시 칠함 | 10 | 10 | 0 | 0 |
 
-'오판독'(틀린 답을 자동 확정)은 0건. 다만 가짜 마킹이라 이 수치는 **코드가 의도대로 동작한다는 확인**이지 실제 성능이 아닙니다.
+'오판독'(틀린 답을 자동 확정)은 0건. 다만 가짜 마킹이라 이 수치는 **코드가 의도대로 동작한다는 확인**이지 실제 성능이 아님.
 
 ## 로그인·계정·권한
 
@@ -337,11 +337,11 @@ storage/admin_exam_list.xlsx ← 관리자 '엑셀로 내보내기' 결과 (덮�
 
 - **`users.json`, `secret.key`는 절대 커밋하면 안 됨.** `storage/`는 `.gitignore`로 제외되어 있음 (`git check-ignore`로 확인함, `*.key`도 따로 제외)
 
-- 칸 위치·크기는 **팀 양식**(pptx `PDF 생성기 양식`, 좌표 JSON `json양식`)을 그대로 따릅니다 (`TEMPLATE_VERSION` 2). 45문항·5지선다면 마커·객관식 동그라미·서술형 칸이 팀 JSON과 같고, `python tools/check_team_form.py`로 확인합니다. 팀 JSON 사본은 `backend/tools/team_form/`.
-- **template_id**는 입력값에서 바로 만듭니다: `P45Q5C` = 세로(P)·45문항·5지선다. 가로는 `L`.
-- **template_version**은 `layout.py`의 `TEMPLATE_VERSION`. 칸 배치 코드를 바꾸면 올려야 합니다.
-  저장된 양식과 같은 id·version인데 좌표가 다르면(`geometry_hash` 불일치) 생성을 멈추고 알려 줍니다. 옛 인쇄본에 새 좌표가 잘못 쓰이는 일을 막기 위해서입니다.
-- 좌표는 **mm, 용지 왼쪽 위 원점**. 정렬 이미지 기준 px는 200dpi(세로 1654×2339, 가로 2339×1654)이고, `bbox_to_px()`로 변환합니다.
+- 칸 위치·크기는 **팀 양식**(pptx `PDF 생성기 양식`, 좌표 JSON `json양식`)을 그대로 따름 (`TEMPLATE_VERSION` 2). 45문항·5지선다면 마커·객관식 동그라미·서술형 칸이 팀 JSON과 같고, `python tools/check_team_form.py`로 확인함. 팀 JSON 사본은 `backend/tools/team_form/`.
+- **template_id**는 입력값에서 바로 만듦: `P45Q5C` = 세로(P)·45문항·5지선다. 가로는 `L`.
+- **template_version**은 `layout.py`의 `TEMPLATE_VERSION`. 칸 배치 코드를 바꾸면 올려야 함.
+  저장된 양식과 같은 id·version인데 좌표가 다르면(`geometry_hash` 불일치) 생성을 멈추고 알려 줌. 옛 인쇄본에 새 좌표가 잘못 쓰이는 일을 막기 위함.
+- 좌표는 **mm, 용지 왼쪽 위 원점**. 정렬 이미지 기준 px는 200dpi(세로 1654×2339, 가로 2339×1654)이고, `bbox_to_px()`로 변환함.
 
 양식 JSON 주요 항목: `frame`(마커·QR 위치), `name_box`, `student_id.bubbles[]`(digit_index, value),
 `mcq.questions[].choices[]`(q, choice, center_mm, radius_mm, bbox_mm), `short_answers.items[]`(no, answer_bbox_mm = OCR 영역).
@@ -352,7 +352,7 @@ storage/admin_exam_list.xlsx ← 관리자 '엑셀로 내보내기' 결과 (덮�
 CM1|<exam_id>|<template_id>|<template_version>|<과목명>|<시험명>
 예) CM1|EX-20261001-8C7353|P45Q5C|2|컴퓨터비전|2026학년도 2학기 중간고사
 ```
-그래서 시험명·과목명에는 `|`를 쓸 수 없습니다.
+그래서 시험명·과목명에는 `|`를 쓸 수 없음.
 
 ## 정렬 순서 (`pipeline/align.py`)
 
@@ -381,10 +381,10 @@ python tools/smoke_test.py --orientation landscape --num-questions 45 --num-choi
 | P45Q5C (세로) | 30/30 | 30/30 | 0.08~0.10 / 0.45 mm | 100% |
 | L45Q5C (가로) | 30/30 | 30/30 | 0.08~0.13 / 0.37 mm | 100% |
 
-팀 양식은 마커가 용지 끝에서 4mm 안쪽이라, 사진을 종이에 꽉 차게 찍으면 마커가 화면 밖으로 잘리기 쉽습니다(데모의 hard 사진 12장 중 1장). 마커 4개가 다 보이게 여백을 두고 찍어야 합니다.
-가상 사진에는 종이 휨·구김·렌즈 왜곡이 없으므로, 실제 인쇄·촬영 검증은 예산이 들어온 뒤 필요합니다.
+팀 양식은 마커가 용지 끝에서 4mm 안쪽이라, 사진을 종이에 꽉 차게 찍으면 마커가 화면 밖으로 잘리기 쉬움(데모의 hard 사진 12장 중 1장). 마커 4개가 다 보이게 여백을 두고 찍어야 함.
+가상 사진에는 종이 휨·구김·렌즈 왜곡이 없으므로, 실제 인쇄·촬영 검증은 예산이 들어온 뒤 필요함.
 
 ## VS Code에서 빨간 줄이 뜰 때
 
-- `checkmate` 폴더를 VS Code로 열면 `pyrightconfig.json`이 `backend`를 import 경로에 넣어 줍니다 (`from sheetgen ...` 인식).
-- 실행은 `backend` 폴더에서 합니다 (`cd backend`). 다른 폴더에서 실행하면 `ModuleNotFoundError: sheetgen`이 납니다.
+- `checkmate` 폴더를 VS Code로 열면 `pyrightconfig.json`이 `backend`를 import 경로에 넣어 줌 (`from sheetgen ...` 인식).
+- 실행은 `backend` 폴더에서 함 (`cd backend`). 다른 폴더에서 실행하면 `ModuleNotFoundError: sheetgen`이 남.
