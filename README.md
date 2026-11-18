@@ -4,7 +4,8 @@
 **ArUco·QR 정렬** (2-2), **규칙 기반 마킹 판독** (2-3), **정답표 입력·채점·엑셀 출력** (2-4),
 인쇄 없이 전체 흐름을 검증하는 **가상 촬영 테스트**.
 2026-11 추가: **잉크 농도 판독**(기본 판독 방식 변경), **로그인·계정·시험별 권한**, **문항 범위 담당**(통합 시험),
-**관리자 화면**, **검수 화면 좌우 배치**(왼쪽 사진, 오른쪽 문항 확인).
+**관리자 화면**, **검수 화면 좌우 배치**(왼쪽 사진, 오른쪽 문항 확인),
+**CNN 이중 검증**(규칙 기반 + CNN), **검수 화면 선지별 채움 비율 막대**, **관리자 회원가입**(로그인 창 '관리자' 탭).
 
 3주차 회의 결정사항을 반영함.
 - 객관식 **문항 수 5~45**, **선지 수 2~5** (1 단위로 웹에서 선택)
@@ -33,8 +34,16 @@ checkmate/
     │   └── render_pdf.py     # 좌표 → PDF
     ├── pipeline/
     │   ├── align.py          # P1 사진 → 마커 검출 → 방향 판별 → 정렬 → QR → 칸 잘라내기
-    │   ├── flow.py           # P1~P5 연결 (사진 한 장 상태: read / align_failed / wrong_exam / too_bright / too_blurry)
-    │   └── read.py           # P3 규칙 기반 판독: 잉크 농도 방식(기본) / 채움 비율 방식 → 문항별 답·학번
+    │   ├── flow.py           # P1~P5 연결 (사진 한 장 상태: read / align_failed / wrong_exam / too_bright / too_blurry), DUAL_VERIFY로 판독 모드 선택
+    │   ├── read.py           # P3 규칙 기반 판독: 잉크 농도 방식(기본) / 채움 비율 방식 → 문항별 답·학번
+    │   ├── rule_based.py     # 판독 모드 "rule_based": 규칙 기반 단독 (CNN 없음, 검수 개수 비교용)
+    │   └── cnn_only.py       # 판독 모드 "cnn_only": 모든 칸을 CNN으로만 판정 (검수 개수 비교용)
+    ├── dual_verify_v2/       # 판독 모드 "v2"(기본): 규칙 기반 + CNN 이중 검증
+    │   ├── __init__.py       # verify_sheet(): read 결과에 CNN 판정을 덧붙여 돌려줌
+    │   ├── config.py         # 설정값 (CONFIDENCE_MIN, DISAGREE_REVIEW 등) — 맨 위 [설정]만 고치면 됨
+    │   ├── cnn.py · model.py · crop.py · compare.py   # CNN 불러오기·모델 구조·칸 잘라내기·문항 판정
+    │   ├── model/best.pt     # 학습된 CNN 가중치
+    │   └── tests/            # dual_verify_v2 단위 테스트
     ├── grading/
     │   ├── answer_key.py     # 정답표·배점 (JSON / 엑셀 입력, 빈 정답표 양식 만들기)
     │   ├── score.py          # 판독 결과 + 정답표 → 점수 (확정 / 검수 대기 구분)
@@ -49,6 +58,7 @@ checkmate/
     │   ├── synth_augment.py  # 합성 사진에 흐림·부분 반사를 넣은 가공 데이터셋 만들기 (재촬영 기준 실험용)
     │   ├── check_team_form.py # 우리 양식 좌표가 팀 JSON과 같은지 확인
     │   └── team_form/        # 팀 좌표 JSON 사본
+    ├── tests/                # 단위 테스트 (test_rule_based, test_cnn_only, test_admin_signup)
     ├── fonts/NotoSansKR-subset.ttf   # 한글 글꼴 (SIL OFL)
     ├── storage/              # 생성 결과·계정·설정 (자동 생성, git 제외. 아래 '저장 방식')
     └── requirements.txt
@@ -186,7 +196,30 @@ http://localhost:8000/docs 에서 파일을 직접 올려 시험해 볼 수 있�
 1. 정렬 이미지를 **적응형 이진화** (영역별 밝기 기준으로 흑백 구분)
 2. 동그라미 **안쪽 70% 원**에서 검은 픽셀 비율(fill) 계산 → fill ≥ 0.60 마킹 / 0.25 ~ 0.60 **애매** / 0.25 미만 빈칸
 
-**두 방식 공통**
+**CNN 이중 검증 (`dual_verify_v2`, P3 뒤 단계)**
+
+P3 판독(read.py) → `dual_verify_v2.verify_sheet()` → P4 채점. read와 같은 형식의 결과를 돌려주므로 뒤 단계는 그대로임.
+- 판독 모드는 `pipeline/flow.py`의 `DUAL_VERIFY`로 고름
+
+| `DUAL_VERIFY` | 판정 |
+|---|---|
+| `"v2"` (기본) | 규칙 기반 + CNN. 마킹 기준(잉크 농도 방식이면 `solid_min`, 이전 방식이면 `marked_min`, 기본 0.60) 이상인 칸은 규칙 기반이 마킹으로 확정, 그 미만인 칸만 CNN이 판정 |
+| `"rule_based"` | 규칙 기반 단독 (`pipeline/rule_based.py`). 기본값이면 `None`과 결과가 같고, 그 파일의 [설정]으로 임계값만 바꿔 비교 가능 |
+| `"cnn_only"` | CNN 단독 (`pipeline/cnn_only.py`). 규칙 기반 값은 쓰지 않고 모든 칸을 CNN으로 판정 |
+| `None` | 이중 검증 단계를 건너뜀 = read.py 판독 그대로 |
+
+- CNN은 칸을 8클래스로 분류: 빈칸 / 정석 마킹 / 얇게 채움 / 체크 표시 / 동그라미 / 수정테이프 / 번짐 / 칸 삐져나옴. 마킹 6종이면 마킹, 빈칸·수정테이프면 마킹 아님
+- `"v2"` 검수 규칙 (`dual_verify_v2/config.py`)
+  - CNN 클래스 신뢰도가 `CONFIDENCE_MIN`(0.9) 미만 → 검수 (`cnn_low_conf`)
+  - 수정테이프 칸이 있는데 그 문항에 마킹이 하나도 없음 → 검수 (`cnn_tape_no_mark`, `TAPE_WITHOUT_MARK_REVIEW`)
+  - 규칙 기반이 이미 확정한 문항·학번 자리(ok / blank / multi)에서 CNN 답이 다름 → 자동 확정하지 않고 검수 (`cnn_disagree`, `DISAGREE_REVIEW=True`). 지운 자국을 CNN이 마킹으로 봐서 생기는 오판독을 막는 안전장치
+  - 반사·과노출·신뢰도(`glare` / `overexposed` / `low_conf`)로 검수된 문항은 그대로 검수로 둠. 얇게 채움·체크·동그라미·흐림으로 보류된 문항은 CNN이 다시 판정함
+  - 학번 칸도 같은 방식으로 판정 (`INCLUDE_STUDENT_ID`). CNN이 학번 칸을 학습한 적이 없어 학번 검수가 늘 수 있음
+- 사진 전체 재촬영(과노출·흐림)은 flow.py가 이 단계 앞에서 먼저 처리함
+- `torch`가 필요함 (`requirements.txt`). `DUAL_VERIFY=None`이면 torch를 불러오지 않음
+- 이 부분 코드는 박현민 님 작업(hyunmin 브랜치, kjh에 병합 33ac271)
+
+**판독 공통 (잉크 농도·채움 비율 방식)**
 - 판독 전 칸 위치 미세 보정 (`refine_offsets`, 아래 '정렬 순서' 7번)
 - 문항별 답 형식 (3주차 회의): `[3]` 정상, `[2, 5]` 복수 응답, `[]` 무응답, `null` **판정 보류** (→ 검수)
 - 학번도 자리마다 같은 방식. 한 자리라도 정상이 아니면 학번 검수
@@ -253,6 +286,8 @@ python tools/synth_eval.py --data <가공 폴더> --ref <원본 synthetic_datase
 - 비밀번호는 PBKDF2-SHA256 해시(솔트 포함)만 저장, 최소 8자. 아이디는 영문 소문자·숫자·`_ . -` 3~30자
 - 로그인 토큰은 `storage/secret.key`로 서명해 HttpOnly 쿠키 `cm_session`으로 줌. 기본 12시간, '로그인 상태 유지'면 30일
 - 비밀번호 변경·초기화·계정 사용 중지 때 예전 토큰은 모두 무효가 됨
+- **관리자 회원가입**: 로그인 화면 '관리자' 탭의 '회원가입'에서 기존 관리자 확인 없이 새 관리자 계정을 바로 만듦 (`POST /api/auth/admin-signup`). 자동 로그인은 안 되고, 만든 뒤 직접 로그인함
+  - ⚠ 로그인 화면에 들어올 수 있는 사람은 누구나 관리자 계정을 만들 수 있음 → 서버를 외부에 열어 두면 안 됨 (같은 PC·학교 내부망 용도)
 
 ### 시험별 역할 (`app/access.py`)
 
@@ -294,6 +329,8 @@ python tools/synth_eval.py --data <가공 폴더> --ref <원본 synthetic_datase
 - 사진은 기본으로 판독 부분(객관식·서술형 칸)만 크게 보여 줌. '전체 사진' 버튼으로 전환. 학번은 오른쪽 학번 입력칸 밑에 그 칸 사진만 따로 보여 줌
 - 기계가 확인 필요로 표시한 문항은 사진에서 주황 테두리, 오른쪽 문항 카드도 테두리로 표시
 - 오른쪽 문항에 마우스를 올리거나 누르면 왼쪽 사진에서 그 줄을 파랗게 짚고 보이게 스크롤
+- 문항 카드마다 **선지별 채움 비율 막대**(위)와 번호 버튼(아래)을 한 열로 보여 줌. 막대 밑에 % 표시, 판독에 쓴 마킹 기준(`solid_min` 또는 `marked_min`, 기본 0.60) 이상이면 진하게 칠함
+- 결과 화면의 학생별 상세에서도 같은 모양의 선지별 채움 막대를 보여 줌
 - '모든 문항 보기'로 확인 필요 문항 외 전체를 볼 수 있음. 맡지 않은 범위 문항은 보기만 함
 - 답안지 목록은 화면 아래. 필터: 검수 필요 / 전체 / 재촬영
 
@@ -303,6 +340,7 @@ python tools/synth_eval.py --data <가공 폴더> --ref <원본 synthetic_datase
 |---|---|
 | `GET /api/auth/status` | 로그인 전 화면용. `needs_setup=True`면 첫 관리자 만들기 |
 | `POST /api/auth/setup` | 첫 관리자 계정 만들기 + 바로 로그인 (계정이 이미 있으면 409) |
+| `POST /api/auth/admin-signup` | 관리자 회원가입 (로그인 화면 '관리자' 탭). 기존 관리자 확인 없음, 자동 로그인 안 함. 409 아이디 중복 / 422 형식 오류 |
 | `POST /api/auth/login` | 로그인 (`as_admin`으로 탭 구분, `remember`로 유지). 쿠키 `cm_session` |
 | `POST /api/auth/logout` | 로그아웃 |
 | `GET /api/auth/me` | 지금 로그인한 계정 (안 했으면 401) |
